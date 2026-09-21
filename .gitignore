@@ -1,0 +1,43 @@
+# Environments & Virtual Envs
+backend/venv/
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node & Frontend build artifacts
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+ml-testing-toolkit/node_modules/
+frontend/dist/
+frontend/.vite/
+.pnpm-store/
+
+# Database & SQLite files
+*.db
+*.sqlite3
+
+# Environment variables & secrets
+.env
+.env.local
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# OS / Temporary files
+Thumbs.db
+desktop.ini
