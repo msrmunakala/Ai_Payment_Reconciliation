@@ -12,7 +12,7 @@ class ReconciliationTests(unittest.TestCase):
         try:
             result=seed_demo_data(db)
             self.assertIn("successfully seeded", result["message"])
-            self.assertEqual(db.query(Reconciliation).count(), 50)
+            self.assertEqual(db.query(Reconciliation).count(), 150)
             self.assertGreaterEqual(db.query(Anomaly).count(), 1)
         finally: db.close()
 if __name__=="__main__": unittest.main()

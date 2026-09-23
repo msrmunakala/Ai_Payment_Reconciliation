@@ -12,8 +12,6 @@ function App() {
   const [anomalies, setAnomalies] = useState([]);
   const [forecast, setForecast] = useState([]);
   const [filter, setFilter] = useState('');
-  const [showScriptModal, setShowScriptModal] = useState(false);
-  const [generatorCode, setGeneratorCode] = useState(null);
   
   // Forecast interactive state
   const [forecastDays, setForecastDays] = useState(7);
@@ -30,17 +28,6 @@ function App() {
       }
     } catch (err) {
       console.error('Error loading forecast:', err);
-    }
-  };
-
-  const fetchScript = async () => {
-    try {
-      const res = await fetch(`${API}/demo/generator-script`, { headers });
-      const data = await res.json();
-      setGeneratorCode(data);
-      setShowScriptModal(true);
-    } catch (err) {
-      console.error('Error fetching generator script:', err);
     }
   };
 
@@ -158,10 +145,9 @@ function App() {
           <p>Explainable Mojaloop-to-ERP reconciliation for treasury review & ML liquidity forecasting.</p>
         </div>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button onClick={() => resetDemo(150)} style={{ background: '#3b82f6' }}>⚡ Generate 150 Data</button>
-          <button onClick={downloadJSON} style={{ background: '#10b981' }}>📥 Download Data (JSON)</button>
-          <button onClick={downloadCSV} style={{ background: '#059669' }}>📄 Download CSV</button>
-          <button onClick={fetchScript} style={{ background: '#8b5cf6' }}>📜 View Generator Script</button>
+          <button onClick={() => resetDemo(150)} style={{ background: '#3b82f6' }}>Generate 150 Data</button>
+          <button onClick={downloadJSON} style={{ background: '#10b981' }}>Download Data (JSON)</button>
+          <button onClick={downloadCSV} style={{ background: '#059669' }}>Download CSV</button>
           <button onClick={run} style={{ background: '#63d7cf', color: '#0d131f' }}>Run reconciliation</button>
         </div>
       </header>
@@ -252,19 +238,19 @@ function App() {
                   className={`forecast-btn ${forecastView === 'trend' ? 'active' : ''}`}
                   onClick={() => setForecastView('trend')}
                 >
-                  📈 Trend & 95% CI
+                  Trend & 95% CI
                 </button>
                 <button 
                   className={`forecast-btn ${forecastView === 'bars' ? 'active' : ''}`}
                   onClick={() => setForecastView('bars')}
                 >
-                  📊 Inflow vs Outflow
+                  Inflow vs Outflow
                 </button>
                 <button 
                   className={`forecast-btn ${forecastView === 'table' ? 'active' : ''}`}
                   onClick={() => setForecastView('table')}
                 >
-                  📋 Data Table
+                  Data Table
                 </button>
               </div>
             </div>
@@ -418,11 +404,11 @@ function App() {
           {activePoint && (
             <div className="forecast-tooltip">
               <div>
-                <span className="tooltip-date">📅 {activePoint.date} Forecast Details</span>
+                <span className="tooltip-date">{activePoint.date} Forecast Details</span>
                 <span className="muted" style={{ marginLeft: '12px', fontSize: '0.78rem' }}>
                   {new Date(activePoint.date).getDay() === 0 || new Date(activePoint.date).getDay() === 6 
-                    ? '⚡ Weekend volume reduction applied (-35%)' 
-                    : '💼 Standard weekday transaction trend'}
+                    ? 'Weekend volume reduction applied (-35%)' 
+                    : 'Standard weekday transaction trend'}
                 </span>
               </div>
               <div className="tooltip-items">
@@ -479,32 +465,9 @@ function App() {
           ))}
         </article>
       </section>
-
-      {/* Generator Script Viewer Modal */}
-      {showScriptModal && generatorCode && (
-        <div className="modal-overlay" onClick={() => setShowScriptModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#f8fafc' }}>📜 Synthetic Data Generator Script (`seed_demo_data`)</h3>
-                <span className="muted" style={{ fontSize: '0.8rem', color: '#94a3b8' }}>File: <code>{generatorCode.filename}</code></span>
-              </div>
-              <button className="close-btn" onClick={() => setShowScriptModal(false)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <pre className="code-block">
-                <code>{generatorCode.code}</code>
-              </pre>
-            </div>
-            <div className="modal-footer">
-              <button onClick={downloadJSON} style={{ background: '#10b981' }}>📥 Download Generated Dataset (JSON)</button>
-              <button onClick={() => setShowScriptModal(false)} style={{ background: '#475569' }}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   );
 }
 
 createRoot(document.getElementById('root')).render(<App />);
+
