@@ -2,7 +2,15 @@
   "name": "reconciliation-dashboard",
   "private": true,
   "version": "2.0.0",
-  "scripts": { "dev": "vite", "build": "vite build" },
-  "dependencies": { "@vitejs/plugin-react": "latest", "vite": "latest", "react": "latest", "react-dom": "latest" },
-  "devDependencies": {}
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "^1.48.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  }
 }
