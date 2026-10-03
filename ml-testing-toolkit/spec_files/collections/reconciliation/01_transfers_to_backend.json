@@ -1,0 +1,409 @@
+{
+  "name": "Reconciliation - transfers into the backend",
+  "description": "Pushes Mojaloop transfers into the AI Payment Reconciliation backend's FSPIOP webhook (POST /webhooks/transfers). This collection replaces the Python synthetic transaction generator: transaction data now originates from the Mojaloop Testing Toolkit. Bank statement and ERP ledger rows are still loaded separately (CSV/XLSX upload or the demo generator), which is what the transfers are reconciled against.\n\nThe cases are chosen to exercise specific reconciliation outcomes, so the result is a meaningful test rather than bulk noise.",
+  "meta": {
+    "name": "Reconciliation - transfers into the backend"
+  },
+  "test_cases": [
+    {
+      "id": 1,
+      "name": "Clean match - exact reference, exact amount",
+      "meta": {
+        "info": "Expect status=matched at high confidence: reference, amount, counterparty and date all agree with bank statement row BS-TTK-0001."
+      },
+      "requests": [
+        {
+          "id": 1,
+          "description": "POST transfer TTK-TX-0001 (USD 15400, ref REF-TTK-0001)",
+          "apiVersion": {
+            "minorVersion": 1,
+            "majorVersion": 1,
+            "type": "fspiop",
+            "asynchronous": false
+          },
+          "operationPath": "/webhooks/transfers",
+          "method": "post",
+          "url": "{$inputs.BACKEND_BASE_URL}",
+          "headers": {
+            "Content-Type": "application/json",
+            "X-API-Key": "{$inputs.BACKEND_API_KEY}"
+          },
+          "body": {
+            "transactionId": "TTK-TX-0001",
+            "referenceId": "REF-TTK-0001",
+            "payer": "Acme Corporation",
+            "payee": "Global Logistics Ltd",
+            "payerFsp": "payerfsp",
+            "payeeFsp": "payeefsp",
+            "amount": 15400.0,
+            "currency": "USD",
+            "transferState": "COMMITTED"
+          },
+          "tests": {
+            "assertions": [
+              {
+                "id": 1,
+                "description": "Backend accepted the transfer",
+                "exec": ["expect(response.status).to.equal(200)"]
+              },
+              {
+                "id": 2,
+                "description": "Transfer was recorded",
+                "exec": [
+                  "expect(response.body.data.transaction_id).to.equal('TTK-TX-0001')",
+                  "expect(response.body.success).to.equal(true)"
+                ]
+              },
+              {
+                "id": 3,
+                "description": "Reconciled incrementally, not by a full re-run",
+                "exec": [
+                  "expect(response.body.data.reconciliation).to.have.property('candidates_evaluated')",
+                  "expect(response.body.data.reconciliation.candidates_evaluated).to.be.below(500)"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Fuzzy counterparty - name variant only resolvable by fuzzy matching",
+      "meta": {
+        "info": "Payer 'Amazon India Private Limited' against bank counterparty 'AMAZON INDIA PVT. LTD'. Exercises legal-suffix stripping and token_set_ratio."
+      },
+      "requests": [
+        {
+          "id": 1,
+          "description": "POST transfer TTK-TX-0002 (INR 450000)",
+          "apiVersion": {
+            "minorVersion": 1,
+            "majorVersion": 1,
+            "type": "fspiop",
+            "asynchronous": false
+          },
+          "operationPath": "/webhooks/transfers",
+          "method": "post",
+          "url": "{$inputs.BACKEND_BASE_URL}",
+          "headers": {
+            "Content-Type": "application/json",
+            "X-API-Key": "{$inputs.BACKEND_API_KEY}"
+          },
+          "body": {
+            "transactionId": "TTK-TX-0002",
+            "referenceId": "REF-TTK-0002",
+            "payer": "Amazon India Private Limited",
+            "payee": "TechSupply Pvt Ltd",
+            "payerFsp": "payerfsp",
+            "payeeFsp": "payeefsp",
+            "amount": 450000.0,
+            "currency": "INR",
+            "transferState": "COMMITTED"
+          },
+          "tests": {
+            "assertions": [
+              {
+                "id": 1,
+                "description": "Backend accepted the transfer",
+                "exec": ["expect(response.status).to.equal(200)"]
+              },
+              {
+                "id": 2,
+                "description": "Multi-currency amount was normalised to the base currency",
+                "exec": [
+                  "expect(response.body.data.reconciliation).to.have.property('status')"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Amount mismatch - outside tolerance",
+      "meta": {
+        "info": "EUR 28900 transfer against a EUR 26000 bank line. Expect status=partial with an amount_mismatch anomaly."
+      },
+      "requests": [
+        {
+          "id": 1,
+          "description": "POST transfer TTK-TX-0003 (EUR 28900)",
+          "apiVersion": {
+            "minorVersion": 1,
+            "majorVersion": 1,
+            "type": "fspiop",
+            "asynchronous": false
+          },
+          "operationPath": "/webhooks/transfers",
+          "method": "post",
+          "url": "{$inputs.BACKEND_BASE_URL}",
+          "headers": {
+            "Content-Type": "application/json",
+            "X-API-Key": "{$inputs.BACKEND_API_KEY}"
+          },
+          "body": {
+            "transactionId": "TTK-TX-0003",
+            "referenceId": "REF-TTK-0003",
+            "payer": "Euro Import Co",
+            "payee": "Berlin Distro GmbH",
+            "payerFsp": "payerfsp",
+            "payeeFsp": "payeefsp",
+            "amount": 28900.0,
+            "currency": "EUR",
+            "transferState": "COMMITTED"
+          },
+          "tests": {
+            "assertions": [
+              {
+                "id": 1,
+                "description": "Backend accepted the transfer",
+                "exec": ["expect(response.status).to.equal(200)"]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Duplicate charge - identical payer, payee, amount and currency",
+      "meta": {
+        "info": "Repeats case 1's economics under a new transactionId. Expect a duplicate_charge anomaly at high severity."
+      },
+      "requests": [
+        {
+          "id": 1,
+          "description": "POST transfer TTK-TX-0004 (duplicate of TTK-TX-0001)",
+          "apiVersion": {
+            "minorVersion": 1,
+            "majorVersion": 1,
+            "type": "fspiop",
+            "asynchronous": false
+          },
+          "operationPath": "/webhooks/transfers",
+          "method": "post",
+          "url": "{$inputs.BACKEND_BASE_URL}",
+          "headers": {
+            "Content-Type": "application/json",
+            "X-API-Key": "{$inputs.BACKEND_API_KEY}"
+          },
+          "body": {
+            "transactionId": "TTK-TX-0004",
+            "referenceId": "REF-TTK-0004",
+            "payer": "Acme Corporation",
+            "payee": "Global Logistics Ltd",
+            "payerFsp": "payerfsp",
+            "payeeFsp": "payeefsp",
+            "amount": 15400.0,
+            "currency": "USD",
+            "transferState": "COMMITTED"
+          },
+          "tests": {
+            "assertions": [
+              {
+                "id": 1,
+                "description": "Backend accepted the transfer",
+                "exec": ["expect(response.status).to.equal(200)"]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Missing settlement - unknown counterparty, no ledger counterpart",
+      "meta": {
+        "info": "Expect flag_for_review or unmatched, plus missing_settlement and unrecognized_account anomalies. The corroboration gate should refuse to match this on amount alone."
+      },
+      "requests": [
+        {
+          "id": 1,
+          "description": "POST transfer TTK-TX-0005 (unrecognised sender)",
+          "apiVersion": {
+            "minorVersion": 1,
+            "majorVersion": 1,
+            "type": "fspiop",
+            "asynchronous": false
+          },
+          "operationPath": "/webhooks/transfers",
+          "method": "post",
+          "url": "{$inputs.BACKEND_BASE_URL}",
+          "headers": {
+            "Content-Type": "application/json",
+            "X-API-Key": "{$inputs.BACKEND_API_KEY}"
+          },
+          "body": {
+            "transactionId": "TTK-TX-0005",
+            "referenceId": "REF-TTK-0005",
+            "payer": "Unrecognised Sender LLC",
+            "payee": "Mystery Account Inc",
+            "payerFsp": "payerfsp",
+            "payeeFsp": "payeefsp",
+            "amount": 65000.0,
+            "currency": "USD",
+            "transferState": "COMMITTED"
+          },
+          "tests": {
+            "assertions": [
+              {
+                "id": 1,
+                "description": "Backend accepted the transfer",
+                "exec": ["expect(response.status).to.equal(200)"]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Idempotency - replaying a transfer must not duplicate it",
+      "meta": {
+        "info": "Re-posts TTK-TX-0001. The backend keys on transactionId, so this must update rather than insert."
+      },
+      "requests": [
+        {
+          "id": 1,
+          "description": "Re-POST transfer TTK-TX-0001",
+          "apiVersion": {
+            "minorVersion": 1,
+            "majorVersion": 1,
+            "type": "fspiop",
+            "asynchronous": false
+          },
+          "operationPath": "/webhooks/transfers",
+          "method": "post",
+          "url": "{$inputs.BACKEND_BASE_URL}",
+          "headers": {
+            "Content-Type": "application/json",
+            "X-API-Key": "{$inputs.BACKEND_API_KEY}"
+          },
+          "body": {
+            "transactionId": "TTK-TX-0001",
+            "referenceId": "REF-TTK-0001",
+            "payer": "Acme Corporation",
+            "payee": "Global Logistics Ltd",
+            "payerFsp": "payerfsp",
+            "payeeFsp": "payeefsp",
+            "amount": 15400.0,
+            "currency": "USD",
+            "transferState": "COMMITTED"
+          },
+          "tests": {
+            "assertions": [
+              {
+                "id": 1,
+                "description": "Backend accepted the replay",
+                "exec": ["expect(response.status).to.equal(200)"]
+              },
+              {
+                "id": 2,
+                "description": "Treated as an update, not a new transaction",
+                "exec": ["expect(response.body.data.created).to.equal(false)"]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Reserved state - transfer not yet committed",
+      "meta": {
+        "info": "transferState=RESERVED should be stored with status PENDING rather than SUCCESS."
+      },
+      "requests": [
+        {
+          "id": 1,
+          "description": "POST transfer TTK-TX-0006 in RESERVED state",
+          "apiVersion": {
+            "minorVersion": 1,
+            "majorVersion": 1,
+            "type": "fspiop",
+            "asynchronous": false
+          },
+          "operationPath": "/webhooks/transfers",
+          "method": "post",
+          "url": "{$inputs.BACKEND_BASE_URL}",
+          "headers": {
+            "Content-Type": "application/json",
+            "X-API-Key": "{$inputs.BACKEND_API_KEY}"
+          },
+          "body": {
+            "transactionId": "TTK-TX-0006",
+            "referenceId": "REF-TTK-0006",
+            "payer": "Oceanic Shipping",
+            "payee": "Port Terminal Services",
+            "payerFsp": "payerfsp",
+            "payeeFsp": "payeefsp",
+            "amount": 72300.0,
+            "currency": "USD",
+            "transferState": "RESERVED"
+          },
+          "tests": {
+            "assertions": [
+              {
+                "id": 1,
+                "description": "Backend accepted the transfer",
+                "exec": ["expect(response.status).to.equal(200)"]
+              },
+              {
+                "id": 2,
+                "description": "Reserved state preserved",
+                "exec": [
+                  "expect(response.body.data.transfer_state).to.equal('RESERVED')"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "Dashboard reflects the pushed transfers",
+      "meta": {
+        "info": "Reads the treasury summary to confirm the pushed transfers were reconciled and FX-normalised."
+      },
+      "requests": [
+        {
+          "id": 1,
+          "description": "GET dashboard summary",
+          "apiVersion": {
+            "minorVersion": 1,
+            "majorVersion": 1,
+            "type": "fspiop",
+            "asynchronous": false
+          },
+          "operationPath": "/dashboard/summary",
+          "method": "get",
+          "url": "{$inputs.BACKEND_BASE_URL}",
+          "headers": {
+            "X-API-Key": "{$inputs.BACKEND_API_KEY}"
+          },
+          "tests": {
+            "assertions": [
+              {
+                "id": 1,
+                "description": "Summary is available",
+                "exec": ["expect(response.status).to.equal(200)"]
+              },
+              {
+                "id": 2,
+                "description": "Transactions are present and FX-normalised",
+                "exec": [
+                  "expect(response.body.total_transactions).to.be.above(0)",
+                  "expect(response.body.total_reconciled_value).to.be.above(0)",
+                  "expect(response.body.base_currency).to.be.a('string')"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

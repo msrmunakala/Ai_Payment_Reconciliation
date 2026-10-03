@@ -1,0 +1,20 @@
+{
+  "inputValues": {
+    "BACKEND_BASE_URL": "http://host.docker.internal:8000",
+    "BACKEND_API_KEY": "review2-demo-key",
+    "HUB_SETTLEMENT_BASE_URL": "http://localhost:4040",
+    "fspid": "testingtoolkitdfsp",
+    "payerfsp": "payerfsp",
+    "payeefsp": "payeefsp"
+  },
+  "notes": [
+    "BACKEND_BASE_URL uses host.docker.internal so the toolkit container can reach",
+    "the FastAPI backend running on the host. When running the toolkit natively",
+    "with 'npm start' instead of Docker, change it to http://localhost:8000.",
+    "",
+    "BACKEND_API_KEY must match the API_KEY the backend was started with.",
+    "If WEBHOOK_SECRET is set on the backend, webhook signature verification is",
+    "enabled and the toolkit cannot sign requests - leave WEBHOOK_SECRET unset",
+    "while driving the backend from the toolkit."
+  ]
+}

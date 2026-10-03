@@ -26,6 +26,10 @@ frontend/.vite/
 # Database & SQLite files
 *.db
 *.sqlite3
+# SQLite write-ahead-log sidecars (created when journal_mode=WAL)
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Environment variables & secrets
 .env

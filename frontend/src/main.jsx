@@ -2,9 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
-const API = 'http://localhost:8000';
-const headers = { 'X-API-Key': 'review2-demo-key' };
-const money = value => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value || 0);
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || 'review2-demo-key';
+const headers = { 'X-API-Key': API_KEY };
+
+// Figures from the backend are normalised to its base currency. Formatting them
+// as INR (as this file previously did) mislabels USD values with a rupee symbol.
+const makeMoneyFormatter = (currency = 'USD') => {
+  const formatter = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 0
+  });
+  return value => formatter.format(value || 0);
+};
 
 function App() {
   const [summary, setSummary] = useState(null);
@@ -12,6 +23,7 @@ function App() {
   const [anomalies, setAnomalies] = useState([]);
   const [forecast, setForecast] = useState([]);
   const [filter, setFilter] = useState('');
+  const [resultTotal, setResultTotal] = useState(0);
   const [showScriptModal, setShowScriptModal] = useState(false);
   const [generatorCode, setGeneratorCode] = useState(null);
   
@@ -19,14 +31,26 @@ function App() {
   const [forecastDays, setForecastDays] = useState(7);
   const [forecastView, setForecastView] = useState('trend'); // 'trend', 'bars', 'table'
   const [activePoint, setActivePoint] = useState(null);
+  const [forecastModel, setForecastModel] = useState(null);
+  const [forecastCurrency, setForecastCurrency] = useState(null);
+  const [forecastSynthetic, setForecastSynthetic] = useState(false);
+
+  // Currency used for every displayed figure, taken from the backend.
+  const baseCurrency = summary?.base_currency || forecastCurrency || 'USD';
+  const money = React.useMemo(() => makeMoneyFormatter(baseCurrency), [baseCurrency]);
 
   const fetchForecast = async (days = forecastDays) => {
     try {
       const res = await fetch(`${API}/forecast?days=${days}`, { headers });
       const f = await res.json();
-      setForecast(f);
-      if (f && f.length > 0) {
-        setActivePoint(f[0]);
+      const points = Array.isArray(f) ? f : [];
+      setForecast(points);
+      if (points.length > 0) {
+        setActivePoint(points[0]);
+        // Model provenance travels with each point.
+        setForecastModel(points[0].model || null);
+        setForecastCurrency(points[0].currency || null);
+        setForecastSynthetic(Boolean(points[0].is_synthetic));
       }
     } catch (err) {
       console.error('Error loading forecast:', err);
@@ -68,15 +92,20 @@ function App() {
       });
   };
 
+  // The results and anomalies endpoints are paginated. Accept either a bare
+  // array (older builds) or a { items, total } envelope.
+  const unwrap = payload => (Array.isArray(payload) ? payload : payload?.items ?? []);
+
   const load = async () => {
     const [s, r, a] = await Promise.all([
       fetch(`${API}/dashboard/summary`, { headers }).then(x => x.json()),
-      fetch(`${API}/reconciliation/results`, { headers }).then(x => x.json()),
-      fetch(`${API}/anomalies`, { headers }).then(x => x.json())
+      fetch(`${API}/reconciliation/results?limit=1000`, { headers }).then(x => x.json()),
+      fetch(`${API}/anomalies?limit=500`, { headers }).then(x => x.json())
     ]);
     setSummary(s);
-    setResults(r);
-    setAnomalies(a);
+    setResults(unwrap(r));
+    setResultTotal(Array.isArray(r) ? r.length : r?.total ?? 0);
+    setAnomalies(unwrap(a));
     await fetchForecast(forecastDays);
   };
 
@@ -187,10 +216,13 @@ function App() {
         {/* Main Reconciliation Table */}
         <article className="panel wide">
           <div className="panel-head">
-            <h2>Reconciliation results ({visible.length} records)</h2>
+            <h2>
+              Reconciliation results ({visible.length}
+              {resultTotal > results.length ? ` of ${resultTotal}` : ''} records)
+            </h2>
             <select value={filter} onChange={e => setFilter(e.target.value)}>
               <option value="">All statuses</option>
-              {['matched', 'partial', 'unmatched'].map(x => <option key={x}>{x}</option>)}
+              {['matched', 'partial', 'flag_for_review', 'unmatched'].map(x => <option key={x}>{x}</option>)}
             </select>
           </div>
           <div className="table-wrap">
@@ -225,7 +257,10 @@ function App() {
             <div>
               <h2>Cash-Flow Liquidity Forecast</h2>
               <p className="muted" style={{ fontSize: '0.8rem', margin: '2px 0 0 0' }}>
-                Machine Learning Time-Series Ridge Regression model with 95% confidence intervals.
+                {forecastModel
+                  ? `${forecastModel === 'prophet' ? 'Prophet' : forecastModel === 'ridge' ? 'Ridge regression' : 'Seasonal naive'} model, 95% confidence interval, values in ${forecastCurrency || 'USD'}.`
+                  : 'Time-series model with 95% confidence intervals.'}
+                {forecastSynthetic ? ' Synthetic placeholder: insufficient history.' : ''}
               </p>
             </div>
             
@@ -420,9 +455,9 @@ function App() {
               <div>
                 <span className="tooltip-date">📅 {activePoint.date} Forecast Details</span>
                 <span className="muted" style={{ marginLeft: '12px', fontSize: '0.78rem' }}>
-                  {new Date(activePoint.date).getDay() === 0 || new Date(activePoint.date).getDay() === 6 
-                    ? '⚡ Weekend volume reduction applied (-35%)' 
-                    : '💼 Standard weekday transaction trend'}
+                  {new Date(activePoint.date).getDay() === 0 || new Date(activePoint.date).getDay() === 6
+                    ? '⚡ Weekend — lower volume learned from history'
+                    : '💼 Weekday — standard settlement volume'}
                 </span>
               </div>
               <div className="tooltip-items">
@@ -474,7 +509,7 @@ function App() {
                 <strong>{a.transaction_id} · {a.type.replaceAll('_', ' ')}</strong>
                 <p>{a.explanation}</p>
               </div>
-              <em>{a.risk_score}/100</em>
+              <em title="Computed risk score">{Math.round((a.risk_score || 0) * 100)}/100</em>
             </div>
           ))}
         </article>

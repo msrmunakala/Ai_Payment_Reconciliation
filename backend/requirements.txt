@@ -1,8 +1,41 @@
-fastapi>=0.115,<1.0
-uvicorn[standard]>=0.30,<1.0
-sqlalchemy>=2.0,<3.0
-pydantic>=2.7,<3.0
-rapidfuzz>=3.0,<4.0
-numpy>=1.26,<3.0
-scikit-learn>=1.4,<2.0
-python-multipart>=0.0.9,<1.0
+# Exact pins for reproducible installs. Versions match the verified local
+# environment (Python 3.11).
+
+# --- Web framework ---
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+python-multipart==0.0.32
+
+# --- Persistence ---
+sqlalchemy==2.0.54
+alembic==1.20.0
+# PostgreSQL driver. SQLite needs no driver (stdlib sqlite3) and remains
+# supported for the unit-test suite.
+psycopg[binary]==3.2.12
+python-dotenv==1.2.3
+
+# --- Outbound HTTP (Mojaloop transfer + settlement APIs) ---
+httpx==0.28.1
+
+# --- Scheduling (automated reconciliation run frequencies) ---
+APScheduler==3.11.0
+
+# --- Data ingestion (CSV / XLSX) ---
+# Previously imported by app/services/ingestion_service.py but missing from this
+# file, so a clean install produced an app whose transactions router could not
+# import. openpyxl is the engine pandas.read_excel requires for .xlsx.
+pandas==3.0.6
+openpyxl==3.1.5
+
+# --- Matching + ML ---
+rapidfuzz==3.14.6
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.9.1
+
+# --- Forecasting ---
+# Prophet is the model named in the project brief. It pulls cmdstanpy +
+# matplotlib (~100 MB). The forecasting service degrades to Ridge regression
+# automatically if this import is unavailable, so the app still boots without it.
+prophet==1.4.0

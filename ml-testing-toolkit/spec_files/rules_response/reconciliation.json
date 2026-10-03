@@ -1,0 +1,132 @@
+[
+  {
+    "type": "response",
+    "version": 1,
+    "ruleId": 101,
+    "priority": 10,
+    "description": "GET /settlementWindows - returns a realistic set of windows with current dates",
+    "apiVersion": {
+      "minorVersion": 0,
+      "majorVersion": 1,
+      "type": "settlements",
+      "asynchronous": false
+    },
+    "conditions": {
+      "all": [
+        {
+          "fact": "operationPath",
+          "operator": "equal",
+          "value": "/settlementWindows"
+        },
+        {
+          "fact": "method",
+          "operator": "equal",
+          "value": "get"
+        }
+      ]
+    },
+    "event": {
+      "method": null,
+      "path": null,
+      "params": {
+        "body": [
+          {
+            "id": 9001,
+            "state": "SETTLED",
+            "reason": "Settled overnight batch",
+            "createdDate": "{$function.generic.curDateISO}",
+            "changedDate": "{$function.generic.curDateISO}"
+          },
+          {
+            "id": 9002,
+            "state": "PENDING_SETTLEMENT",
+            "reason": "Closed, awaiting settlement instruction",
+            "createdDate": "{$function.generic.curDateISO}",
+            "changedDate": "{$function.generic.curDateISO}"
+          },
+          {
+            "id": 9003,
+            "state": "CLOSED",
+            "reason": "Window closed by the hub scheduler",
+            "createdDate": "{$function.generic.curDateISO}",
+            "changedDate": "{$function.generic.curDateISO}"
+          },
+          {
+            "id": 9004,
+            "state": "OPEN",
+            "reason": "Currently accepting transfers",
+            "createdDate": "{$function.generic.curDateISO}",
+            "changedDate": null
+          }
+        ],
+        "statusCode": "200"
+      },
+      "delay": 0,
+      "type": "FIXED_RESPONSE"
+    }
+  },
+  {
+    "type": "response",
+    "version": 1,
+    "ruleId": 102,
+    "priority": 10,
+    "description": "GET /settlements/{id} - single settlement lookup. This and GET /settlementWindows are the only GET operations the Mojaloop settlement API defines; GET /settlements and GET /settlementWindows/{id} do not exist (those paths are POST-only).",
+    "apiVersion": {
+      "minorVersion": 0,
+      "majorVersion": 1,
+      "type": "settlements",
+      "asynchronous": false
+    },
+    "conditions": {
+      "all": [
+        {
+          "fact": "operationPath",
+          "operator": "equal",
+          "value": "/settlements/{id}"
+        },
+        {
+          "fact": "method",
+          "operator": "equal",
+          "value": "get"
+        }
+      ]
+    },
+    "event": {
+      "method": null,
+      "path": null,
+      "params": {
+        "body": {
+          "id": "{$request.params.id}",
+          "state": "SETTLED",
+          "settlementModel": "DEFERRED_NET",
+          "createdDate": "{$function.generic.curDateISO}",
+          "changedDate": "{$function.generic.curDateISO}",
+          "settlementWindows": [
+            {
+              "id": 9001,
+              "state": "SETTLED",
+              "createdDate": "{$function.generic.curDateISO}",
+              "changedDate": "{$function.generic.curDateISO}"
+            }
+          ],
+          "participants": [
+            {
+              "id": 1,
+              "accounts": [
+                {
+                  "id": 11,
+                  "state": "SETTLED",
+                  "reason": "net position settled",
+                  "netSettlementAmount": { "amount": 152400, "currency": "USD" }
+                }
+              ]
+            }
+          ]
+        },
+        "statusCode": "200"
+      },
+      "delay": 0,
+      "type": "FIXED_RESPONSE"
+    }
+  }
+]
