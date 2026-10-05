@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import RunScope, SettlementWindowState
+from app.models.reconciliation import ReconciliationRun
 from app.models.settlement import Settlement, SettlementWindow
 from app.models.transaction import Transaction
 from app.services.mojaloop_service import MojaloopClient, _parse_timestamp
@@ -459,8 +460,14 @@ def list_windows(
 
 
 def _window_view(db: Session, row: SettlementWindow) -> Dict[str, Any]:
+    """Serialise a window, including the outcome of the run that covered it.
+
+    The matched / exception counts are read from the recorded
+    ``ReconciliationRun`` rather than recomputed, so an operations table can
+    show a window's result without a query per row.
+    """
     start, end = window_scope(row)
-    return {
+    view: Dict[str, Any] = {
         "window_id": row.window_id,
         "state": row.state,
         "reason": row.reason,
@@ -473,7 +480,37 @@ def _window_view(db: Session, row: SettlementWindow) -> Dict[str, Any]:
         "reconciled_at": row.reconciled_at.isoformat() if row.reconciled_at else None,
         "last_run_id": row.last_run_id,
         "synced_at": row.synced_at.isoformat() if row.synced_at else None,
+        "matched_count": None,
+        "partial_count": None,
+        "flagged_count": None,
+        "unmatched_count": None,
+        "exception_count": None,
+        "run_duration_seconds": None,
+        "run_status": None,
     }
+
+    if row.last_run_id:
+        run = (
+            db.query(ReconciliationRun)
+            .filter(ReconciliationRun.id == row.last_run_id)
+            .first()
+        )
+        if run is not None:
+            view.update(
+                matched_count=run.matched_count,
+                partial_count=run.partial_count,
+                flagged_count=run.flagged_count,
+                unmatched_count=run.unmatched_count,
+                # "Exceptions" in an operations view means everything that did
+                # not cleanly match and therefore needs a human.
+                exception_count=(run.partial_count or 0)
+                + (run.flagged_count or 0)
+                + (run.unmatched_count or 0),
+                run_duration_seconds=run.duration_seconds,
+                run_status=run.status,
+            )
+
+    return view
 
 
 def pending_windows(db: Session) -> List[SettlementWindow]:

@@ -17,10 +17,12 @@ from app.core.config import settings
 from app.database.db import get_db
 from app.schemas.dashboard_schema import CashFlowForecastPoint
 from app.services.forecasting_service import (
+    build_daily_history,
     forecast_metadata,
     generate_forecast,
     get_forecast_points,
 )
+from app.services.fx_service import get_converter
 
 router = APIRouter(prefix="/forecast", tags=["Forecasting"])
 
@@ -44,6 +46,39 @@ def get_forecast(
 def get_forecast_metadata(db: Session = Depends(get_db)):
     """Which model produced the stored forecast, over how much history, how old."""
     return forecast_metadata(db)
+
+
+@router.get("/history")
+def get_cash_flow_history(
+    lookback_days: int = Query(
+        90, ge=1, le=730, description="How far back to aggregate observed movement"
+    ),
+    db: Session = Depends(get_db),
+):
+    """Observed daily cash movement, in the base currency.
+
+    This is the *actual* series the forecast is fitted to, exposed so a client
+    can plot history and forecast on one axis and keep them visually distinct.
+    Read-only: it aggregates existing ledger rows and trains nothing.
+    """
+    converter = get_converter(db)
+    series, notes = build_daily_history(db, converter, lookback_days=lookback_days)
+
+    return {
+        "currency": converter.base_currency,
+        "lookback_days": lookback_days,
+        "days": len(series),
+        "notes": notes,
+        "points": [
+            {
+                "date": point.day.isoformat(),
+                "inflow": round(point.inflow, 2),
+                "outflow": round(point.outflow, 2),
+                "net": round(point.net, 2),
+            }
+            for point in series
+        ],
+    }
 
 
 @router.post("/run")

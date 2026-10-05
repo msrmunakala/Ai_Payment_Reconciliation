@@ -478,3 +478,82 @@ Hub reachable with 4 windows; `net_amount` populated (152,400 USD, previously al
 ### One behaviour worth knowing
 
 The toolkit mock stamps settlement windows with the **current** time on every request, so a window always covers "the last 24 hours". Seeded demo data that is a day or two old therefore falls outside every window and the panel shows `txns=0`. That is accurate rather than broken — on a real hub, windows and the transfers inside them are contemporaneous. Re-seed, or push a fresh transfer, to see non-zero counts.
+
+## 10. Frontend rebuilt as an operations console
+
+The dashboard was a single 870-line `main.jsx` with one screen, inline styles and a hand-rolled SVG forecast chart. It has been rebuilt as a navigable enterprise application. The backend was not restructured: two small read-only additions were made (below) and everything else consumes existing endpoints.
+
+### Structure
+
+```
+src/
+  main.jsx                    entry
+  App.jsx                     shell, routing, shared summary/health loading
+  api.js                      single API client (auth, errors, pagination)
+  lib/format.js               currency, date, duration, risk formatting
+  lib/useHashRoute.js         ~30-line hash router
+  components/
+    Sidebar.jsx  TopBar.jsx   application shell
+    ui.jsx                    badges, KPI tiles, buttons, filters, pagination, notices
+    DataTable.jsx             sticky-header table with expandable rows
+    charts.jsx                status breakdown + cash-flow chart
+  pages/                      9 pages, one per sidebar section
+  styles.css                  light enterprise theme
+```
+
+No routing or charting library was added. Hash routing is ~30 lines and keeps the app deployable as static files with no server rewrite rules; the two charts are plain SVG rather than a ~400 kB dependency. React and React DOM remain the only runtime dependencies.
+
+### Pages and the APIs they consume
+
+| Page | Endpoints |
+| --- | --- |
+| Shell / top bar | `/dashboard/summary`, `/webhooks/status`, `/ready`, `/scheduler/status` |
+| Dashboard | the above plus `/settlement/windows`, `/reconciliation/anomalies`, `/dashboard/runs`, `/forecast/`, `/forecast/history`, `/forecast/metadata` |
+| Reconciliation | `/reconciliation/results` (status, tier, ledger, window, manual filters, paging), `/reconciliation/manual-match`, `/reports/export.csv` |
+| Transactions | `/transactions/`, `/transactions/bank`, `/transactions/erp` |
+| Settlement Windows | `/settlement/windows`, `/settlement/sync`, `/settlement/windows/{id}/reconcile`, `/settlement/windows/reconcile-pending`, `/settlement/settlements` |
+| Exceptions | `/reconciliation/anomalies`, `/reconciliation/anomalies/{id}/resolve` |
+| Forecast | `/forecast/`, `/forecast/history`, `/forecast/metadata`, `/forecast/run` |
+| FX Rates | `/fx/rates`, `/fx/convert`, `/fx/refresh`, `/fx/rates/{ccy}` |
+| Run History | `/dashboard/runs`, `/reconciliation/run` |
+| Settings | `/scheduler/*`, `/webhooks/status`, `/demo/reset`, `/demo/export-json`, `/reports/export.csv` |
+
+Filtering, sorting and pagination are performed **by the backend**. The table never holds more than one page, and the counts shown are the API's totals rather than client-side estimates. Where the backend already aggregates something — status counts, FX exposure, ledger coverage, confidence distribution — that aggregate is displayed directly rather than recomputed.
+
+### Two backend additions
+
+Both are additive, read-only, and were needed to satisfy the design rather than to restructure anything.
+
+- **`GET /forecast/history`** exposes the daily series the forecast is already fitted to (`build_daily_history`), so history and forecast can be plotted on one axis and kept visually distinct. Previously only future points were reachable.
+- **Settlement window rows now carry their run's outcome** — matched, partial, flagged, unmatched, exception total, duration and status — read from the recorded `ReconciliationRun` rather than recomputed, so an operations table needs no query per row.
+
+### Design decisions
+
+- **Light neutral theme**, one accent colour for interactive elements. Green, amber and red are used *only* to carry status meaning, never decoration.
+- **Tables, not cards.** Exceptions, windows, runs, transactions and FX rates are all tables with sticky headers, right-aligned monetary columns, row hover, clickable IDs and expandable detail rows.
+- **Money is formatted per currency.** INR uses the lakh convention (`₹24,82,450.00`), USD and EUR use thousands. The previous build formatted every figure as INR regardless of the backend's base currency, labelling USD values with a rupee symbol.
+- **One date format everywhere**: `YYYY-MM-DD HH:MM`.
+- **The forecast is presented as a model output**, not a result to be taken on faith: the fitted model, history length and a synthetic-padding warning are all shown, and the forecast line is dashed and separated by a labelled divider.
+- **Desktop density preserved.** Below 1024 px the sidebar collapses to an icon rail and panels stack; column counts are not reduced to suit phones.
+
+### What was preserved
+
+Every capability the old dashboard had still works: run reconciliation, view results, review exceptions, see the forecast, export CSV and JSON, view the generator script source, and regenerate the demo dataset. Authentication is unchanged (`X-API-Key`, `VITE_API_KEY`/`VITE_API_URL`). Nothing in the Mojaloop integration, the database models or the reconciliation engine was touched.
+
+Added on top: per-ledger browsing of bank and ERP records, server-side filtering on every table, pagination, settlement-window drill-through, manual-override withdrawal, FX rate editing with history, scheduler control, and the run audit trail.
+
+### Still hardcoded
+
+- The **user identity** in the top bar ("Treasury Ops / Analyst") is a placeholder. The backend has no user model — authentication is a single shared API key — so there is no identity to display. Real users require authentication work on the backend first.
+- The **"Regenerate demo dataset" parameters** (600 transactions, 30 days, seed 42) are fixed in the Settings page rather than being form inputs.
+- **Sidebar section names** are static, as they describe fixed application areas.
+
+Everything else on screen comes from the API.
+
+### Verified
+
+`vite build` is clean (33 modules, 296 kB / 88 kB gzipped) with no warnings. All 21 source modules transform and serve. All nine pages were server-rendered against the live backend to catch render-time crashes that a successful build would not reveal, and the formatting was spot-checked in the rendered output (`$7.89M` compact USD, per-currency symbols for EUR and INR, 94.8% rate). 29 endpoint calls across the nine pages all return 200. Backend suites remain green: 29 unit tests and 111 end-to-end assertions on both SQLite and PostgreSQL.
+
+### Known issue
+
+The **settlement window transaction counts read low** against the Testing Toolkit. Its mock stamps every window with the current time, so each covers roughly the last 24 hours while seeded demo data is older. The feature is correct — this is mock behaviour, documented in section 9 — but a demo looks better after regenerating the dataset with a short history (`POST /demo/reset?count=600&history_days=30`).
