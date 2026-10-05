@@ -12,7 +12,7 @@ Changes from the original router:
   (``... if cond else False`` binding over the whole right operand of ``|``).
 """
 
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -24,8 +24,6 @@ from app.database.db import get_db
 from app.models.bank_transaction import BankTransaction, ERPRecord
 from app.models.transaction import Transaction
 from app.schemas.transaction_schema import (
-    BankTransactionResponse,
-    ERPRecordResponse,
     PaginatedBankTransactions,
     PaginatedERPRecords,
     PaginatedTransactions,

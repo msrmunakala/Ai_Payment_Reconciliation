@@ -408,3 +408,73 @@ Transaction data now originates from Mojaloop rather than the Python generator.
 | `backend/app/webhooks/__init__.py` | Empty placeholder package. |
 | `backend/_tmp_check_ingest.py` | Scratch script whose own docstring said it should have been deleted. |
 | Embedded seed-script string literal in `main.py` | A stale hand-maintained copy of `seed_demo_data` that had already drifted. `/demo/generator-script` now reads the real source via `inspect.getsource`. |
+
+## 8. Dead-code audit and cleanup
+
+Audited with `ruff` and AST analysis before adding the settlement UI, so new code was not layered on top of unused code. All of the following were zero-risk removals — nothing referenced them.
+
+**Unused imports (11)** — `api/mojaloop.py`, `api/reconciliation.py`, `api/transactions.py`, `services/mojaloop_service.py`, `tests/test_reconciliation.py`, plus one dead local variable.
+
+**`app/utils/helpers.py` was ~85% dead.** Only 2 of its 9 public names were imported anywhere. Removed `CURRENCY_SYMBOLS`, `format_currency`, `utc_now`, `utc_now_iso`, `safe_divide`, `percentage` and `truncate`; kept `verify_hmac_signature` and `compute_hmac_signature`. (`percentage` and `truncate` looked used on a first pass, but those were false positives — the word "percentage" appears in a model *comment*, and `truncate` matched `buffer.truncate(0)` in `main.py`.)
+
+**4 unused Pydantic models:**
+
+| Removed | Why it was dead |
+| --- | --- |
+| `ForecastResponse` | an envelope that was built, then the endpoint returned a bare list |
+| `AnomalyResponse` | the anomaly endpoints return plain dicts |
+| `BankTransactionCreate` | no POST endpoint for bank rows — only CSV/XLSX upload |
+| `ERPRecordCreate` | same |
+
+**Other removals:** `mojaloop_service.fetch_transactions()` (a backwards-compatibility alias nothing called), `MatchingSettings.amount_bucket_fraction` (left over from a bucketing approach replaced by binary search), `MojaloopSettings.toolkit_api_url` (added, never used), and `scipy` from `requirements.txt` (never imported; `scikit-learn` pulls it in transitively). The obsolete SQLite database files were deleted now that PostgreSQL is primary.
+
+`ruff check --select F` is clean across `app`, `tests`, `test_api.py` and `alembic`.
+
+### Status badge CSS was broken, not just stale
+
+This was a visible defect rather than dead code. `styles.css` styled an **older status vocabulary** the backend no longer emits, and had **no rule for any current status**:
+
+```css
+/* before */
+.tag.amount_mismatch, .tag.missing_in_erp, .tag.duplicate_erp, .severity.high { ... }
+.tag.pending_settlement, .tag.delayed_settlement, .severity.medium { ... }
+```
+
+| Value the backend emits | Before | After |
+| --- | --- | --- |
+| `matched`, `partial`, `unmatched`, `flag_for_review` | no rule — fell through to the grey base `.tag` | styled |
+| `severity: low` | no rule | styled |
+| 5 classes for states that no longer exist | present | removed |
+
+Every status badge in the results table had been rendering unstyled.
+
+## 9. Settlement windows in the dashboard
+
+Previously the settlement feature was backend-only: fully working through the API and Swagger, but with no screen. That gap is now closed.
+
+### New panel
+
+A **Settlement windows** table showing, per window: id, state, the time interval it covers, how many transactions fall inside it, and whether it has been reconciled (with the run id). Plus:
+
+- **Sync windows** — pulls the latest windows from the hub and reports what changed.
+- **Reconcile** (per closed window) — runs reconciliation scoped to that window only.
+- **Reconcile all pending** — processes every closed window still outstanding; disabled when there are none.
+- **View** — filters the reconciliation results table to that window, with a dismissible chip showing the active scope.
+- A **hub reachability indicator** so an empty table is distinguishable from an unreachable hub.
+- A **Settlements** sub-table: id, state, model, covered windows and net settled value.
+
+Window and settlement states get their own badge colours tracking `SettlementWindowState`.
+
+### Supporting backend changes
+
+**`GET /reconciliation/results` accepts `settlement_window_id`.** Results are filtered by resolving the window's time interval and matching transaction timestamps — the same mechanism a scoped run uses to select its work. No schema change was needed; an unknown window id returns 404. New helper: `settlement_service.transaction_ids_in_window()`.
+
+**`Settlement.net_amount` and `Settlement.currency` are now populated** rather than dropped. The audit flagged them as never written, and dropping them would have required a migration. Instead `_net_position()` derives them from the hub's `participants[].accounts[].netSettlementAmount`. Two deliberate choices: the **positive** side is summed, because a settlement's net amounts cancel to roughly zero across participants and the useful treasury figure is gross value moved; and a **mixed-currency** settlement leaves both fields unset rather than adding currencies together, which is logged rather than hidden.
+
+### Verified
+
+Hub reachable with 4 windows; `net_amount` populated (152,400 USD, previously always null); a freshly pushed transfer moved a window's count from 0 → 1; scoping that window produced `total=1`; the results filter returned 1 of 307. 29 unit tests and 111 end-to-end assertions pass on both SQLite and PostgreSQL, and the frontend builds clean.
+
+### One behaviour worth knowing
+
+The toolkit mock stamps settlement windows with the **current** time on every request, so a window always covers "the last 24 hours". Seeded demo data that is a day or two old therefore falls outside every window and the panel shows `txns=0`. That is accurate rather than broken — on a real hub, windows and the transfers inside them are contemporaneous. Re-seed, or push a fresh transfer, to see non-zero counts.

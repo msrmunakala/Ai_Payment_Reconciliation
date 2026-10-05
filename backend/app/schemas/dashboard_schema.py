@@ -5,7 +5,7 @@ in the service layer surfaces as a validation error rather than silently
 rendering blanks. Everything added later is optional with a default.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -89,10 +89,3 @@ class CashFlowForecastPoint(BaseModel):
     model: Optional[str] = None
     currency: Optional[str] = None
     is_synthetic: bool = False
-
-
-class ForecastResponse(BaseModel):
-    """Envelope used by the metadata endpoint; the list endpoint stays a list."""
-
-    points: List[CashFlowForecastPoint] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)

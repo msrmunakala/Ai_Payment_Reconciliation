@@ -129,9 +129,6 @@ class MatchingSettings:
     require_corroboration: bool = _env_bool("MATCH_REQUIRE_CORROBORATION", True)
     reference_corroboration_floor: float = _env_float("MATCH_REF_CORROBORATION_FLOOR", 75.0)
 
-    # Amount bucket width used as a blocking key, as a fraction of amount.
-    amount_bucket_fraction: float = _env_float("MATCH_AMOUNT_BUCKET_FRACTION", 0.02)
-
     # Safety valve: if a single transaction blocks in more than this many
     # candidates, keep only the best-scoring ones.
     max_candidates_per_transaction: int = _env_int("MATCH_MAX_CANDIDATES", 50)
@@ -175,8 +172,6 @@ class MojaloopSettings:
     # The Testing Toolkit mounts settlements_1.0 at the root and settlements_2.0
     # under a "v2" prefix. Default targets 1.0; set to "v2" for the 2.0 API.
     settlement_api_prefix: str = _env_str("MOJALOOP_SETTLEMENT_API_PREFIX", "")
-    # Toolkit admin API, used to launch test collections from our side.
-    toolkit_api_url: str = _env_str("MOJALOOP_TOOLKIT_API_URL", "http://localhost:5050")
     # Nominal settlement window length. Used only when the hub reports a window
     # whose open and close timestamps are identical or missing, which would
     # otherwise give a zero-width reconciliation scope that matches nothing.

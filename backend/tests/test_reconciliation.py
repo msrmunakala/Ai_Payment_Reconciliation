@@ -11,7 +11,7 @@ built at import time from configuration.
 import os
 import sys
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -27,7 +27,7 @@ from app.core.constants import (  # noqa: E402
     MatchStatus,
 )
 from app.database.db import Base, SessionLocal, engine  # noqa: E402
-from app.models.bank_transaction import BankTransaction, ERPRecord  # noqa: E402
+from app.models.bank_transaction import BankTransaction  # noqa: E402
 from app.models.reconciliation import (  # noqa: E402
     Anomaly,
     ManualMatch,
@@ -112,7 +112,6 @@ class ScoringTests(unittest.TestCase):
     def test_perfect_match_without_reference_still_reaches_matched(self):
         from app.services.matching_engine import LedgerCandidate, score_pair
 
-        converter = FXConverter.from_db(None)
         now = datetime.utcnow()
         transaction = Transaction(
             transaction_id="T1",

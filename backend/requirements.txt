@@ -31,7 +31,7 @@ openpyxl==3.1.5
 # --- Matching + ML ---
 rapidfuzz==3.14.6
 numpy==2.4.6
-scipy==1.17.1
+# scipy is not imported directly; scikit-learn pulls it in transitively.
 scikit-learn==1.9.1
 
 # --- Forecasting ---

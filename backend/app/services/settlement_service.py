@@ -86,6 +86,7 @@ def normalize_settlement(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     participants = raw.get("participants")
     participant_count = len(participants) if isinstance(participants, list) else 0
+    net_amount, currency = _net_position(participants)
 
     return {
         "settlement_id": str(settlement_id),
@@ -96,8 +97,66 @@ def normalize_settlement(raw: Dict[str, Any]) -> Dict[str, Any]:
         "changed_date": _parse_timestamp(_first(raw, "changedDate", "updatedAt")),
         "window_ids": ",".join(window_ids) or None,
         "participant_count": participant_count,
+        "net_amount": net_amount,
+        "currency": currency,
         "raw_payload": json.dumps(raw, default=str)[:20000],
     }
+
+
+def _net_position(participants: Any) -> Tuple[Optional[float], Optional[str]]:
+    """Total settled value and currency from a settlement's participant accounts.
+
+    The hub reports a ``netSettlementAmount`` per participant account, and those
+    net out to roughly zero across the whole settlement (one party's debit is
+    another's credit). The useful figure for a treasury view is the gross value
+    moved, so the positive side is summed.
+
+    Returns ``(None, None)`` when the payload carries no amounts, and reports
+    only a single currency: a mixed-currency settlement cannot be summarised by
+    one number, so it is left unset rather than silently adding currencies
+    together.
+    """
+    if not isinstance(participants, list):
+        return None, None
+
+    total = 0.0
+    currencies: set[str] = set()
+    seen_any = False
+
+    for participant in participants:
+        if not isinstance(participant, dict):
+            continue
+        for account in participant.get("accounts") or []:
+            if not isinstance(account, dict):
+                continue
+            net = account.get("netSettlementAmount")
+            if not isinstance(net, dict):
+                continue
+            raw_amount = net.get("amount")
+            if raw_amount is None:
+                continue
+            try:
+                value = float(str(raw_amount).replace(",", ""))
+            except (TypeError, ValueError):
+                continue
+            seen_any = True
+            code = net.get("currency")
+            if code:
+                currencies.add(str(code).strip().upper())
+            if value > 0:
+                total += value
+
+    if not seen_any:
+        return None, None
+    if len(currencies) > 1:
+        logger.info(
+            "Settlement spans %d currencies (%s); net amount left unset",
+            len(currencies),
+            ", ".join(sorted(currencies)),
+        )
+        return None, None
+
+    return round(total, 2), (next(iter(currencies)) if currencies else None)
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +206,22 @@ def count_transactions_in_window(db: Session, window: SettlementWindow) -> int:
         .scalar()
         or 0
     )
+
+
+def transaction_ids_in_window(db: Session, window: SettlementWindow) -> List[str]:
+    """Business ids of the transactions inside a window's interval.
+
+    Lets reconciliation results be filtered by window without adding a column:
+    the link between a result and a window is the transaction's timestamp, which
+    is exactly how a scoped run selects its work in the first place.
+    """
+    start, end = window_scope(window)
+    return [
+        row[0]
+        for row in db.query(Transaction.transaction_id)
+        .filter(Transaction.created_at >= start, Transaction.created_at <= end)
+        .all()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +596,7 @@ def reconcile_pending_windows(
 __all__ = [
     "RECONCILABLE_STATES",
     "count_transactions_in_window",
+    "transaction_ids_in_window",
     "get_window",
     "list_windows",
     "normalize_settlement",

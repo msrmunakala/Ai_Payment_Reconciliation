@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import TransactionStatus, TransactionType, TransferState
+from app.core.constants import TransactionStatus, TransferState
 
 
 class _NormalisedMixin(BaseModel):
@@ -59,17 +59,6 @@ class TransactionResponse(_NormalisedMixin):
     model_config = ConfigDict(from_attributes=True)
 
 
-class BankTransactionCreate(BaseModel):
-    bank_statement_id: str = Field(..., min_length=1)
-    account_number: str = Field(..., min_length=1)
-    counterparty: str = Field(..., min_length=1)
-    amount: float
-    currency: str = Field("USD", min_length=3, max_length=3)
-    transaction_type: str = TransactionType.CREDIT.value
-    reference_number: Optional[str] = None
-    bank_name: str = "Central Settlement Bank"
-
-
 class BankTransactionResponse(_NormalisedMixin):
     id: int
     bank_statement_id: str
@@ -84,15 +73,6 @@ class BankTransactionResponse(_NormalisedMixin):
     status: str
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class ERPRecordCreate(BaseModel):
-    erp_id: str = Field(..., min_length=1)
-    invoice_number: Optional[str] = None
-    customer_vendor_name: str = Field(..., min_length=1)
-    expected_amount: float
-    currency: str = Field("USD", min_length=3, max_length=3)
-    ledger_account: str = Field(..., min_length=1)
 
 
 class ERPRecordResponse(_NormalisedMixin):

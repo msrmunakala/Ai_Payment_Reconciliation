@@ -11,9 +11,8 @@ Changes from the original router:
   APIs. ``/simulate-fetch`` is retained but now clearly labelled as simulated.
 """
 
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 

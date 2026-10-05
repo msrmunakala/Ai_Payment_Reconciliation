@@ -167,14 +167,45 @@ th, td {
   display: inline-block;
 }
 
-.tag.amount_mismatch, .tag.missing_in_erp, .tag.duplicate_erp, .severity.high {
+/* Reconciliation status badges.
+   These must track app.core.constants.MatchStatus. The previous rules styled an
+   older vocabulary (amount_mismatch / missing_in_erp / duplicate_erp /
+   pending_settlement / delayed_settlement) that the backend no longer emits, so
+   every status badge fell through to the base .tag style. */
+.tag.matched {
+  background: #1b6a5d;
+  color: #baf7e8;
+}
+
+.tag.partial {
+  background: #5b4828;
+  color: #ffe0a7;
+}
+
+.tag.flag_for_review {
+  background: #553a68;
+  color: #e8d4ff;
+}
+
+.tag.unmatched {
   background: #652c42;
   color: #ffd4dd;
 }
 
-.tag.pending_settlement, .tag.delayed_settlement, .severity.medium {
+/* Anomaly severity badges - track app.core.constants.Severity. */
+.severity.high {
+  background: #652c42;
+  color: #ffd4dd;
+}
+
+.severity.medium {
   background: #5b4828;
   color: #ffe0a7;
+}
+
+.severity.low {
+  background: #2b4660;
+  color: #cfe3f7;
 }
 
 .anomaly {
@@ -597,3 +628,130 @@ a:hover {
   gap: 12px;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Settlement windows panel                                            */
+/* ------------------------------------------------------------------ */
+
+/* Window / settlement lifecycle states.
+   Tracks app.core.constants.SettlementWindowState. */
+.tag.win-open {
+  background: #1f4b6e;
+  color: #cde8ff;
+}
+
+.tag.win-closed {
+  background: #5b4828;
+  color: #ffe0a7;
+}
+
+.tag.win-pending_settlement {
+  background: #553a68;
+  color: #e8d4ff;
+}
+
+.tag.win-settled {
+  background: #1b6a5d;
+  color: #baf7e8;
+}
+
+.tag.win-aborted,
+.tag.win-aborting {
+  background: #652c42;
+  color: #ffd4dd;
+}
+
+/* Hub reachability indicator next to the panel description. */
+.hub-dot {
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.hub-dot.up {
+  background: #143f36;
+  color: #8ce0c9;
+}
+
+.hub-dot.down {
+  background: #4a2630;
+  color: #ffbecb;
+}
+
+/* Transient feedback line for sync / reconcile actions. */
+.window-notice {
+  margin: 4px 0 12px 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #142338;
+  border-left: 3px solid #63d7cf;
+  color: #cfe0f5;
+  font-size: 0.82rem;
+}
+
+/* Chip showing the results table is scoped to one window. */
+.scope-chip {
+  margin-left: 10px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 12px;
+  background: #1f3a52;
+  color: #9fd8ff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.scope-clear {
+  background: none;
+  border: none;
+  color: #9fd8ff;
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 0 2px 0 6px;
+}
+
+.scope-clear:hover {
+  color: #fff;
+}
+
+/* Inline row actions. */
+.link-btn {
+  background: none;
+  border: 1px solid #2f4765;
+  color: #9fb8d6;
+  border-radius: 4px;
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  margin-right: 6px;
+}
+
+.link-btn:hover:not(:disabled) {
+  border-color: #63d7cf;
+  color: #cdf6f1;
+}
+
+.link-btn.primary {
+  border-color: #1b6a5d;
+  color: #8ce0c9;
+}
+
+.link-btn.primary:hover:not(:disabled) {
+  background: #143f36;
+}
+
+.link-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+tr.row-active td {
+  background: rgba(99, 215, 207, 0.08);
+}
+
+.forecast-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

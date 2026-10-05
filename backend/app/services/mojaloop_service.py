@@ -27,8 +27,8 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -849,17 +849,11 @@ def simulated_transfers() -> Dict[str, Any]:
     }
 
 
-def fetch_transactions() -> Dict[str, Any]:
-    """Backwards-compatible alias for the original function name."""
-    return simulated_transfers()
-
-
 __all__ = [
     "MojaloopClient",
     "MojaloopUnavailableError",
     "SyncResult",
     "connection_status",
-    "fetch_transactions",
     "normalize_transfer",
     "persist_transfers",
     "simulated_transfers",

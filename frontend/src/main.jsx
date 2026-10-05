@@ -35,6 +35,15 @@ function App() {
   const [forecastCurrency, setForecastCurrency] = useState(null);
   const [forecastSynthetic, setForecastSynthetic] = useState(false);
 
+  // Settlement windows. A window is the period the hub considers closed, and is
+  // the unit a reconciliation run is scoped to.
+  const [windows, setWindows] = useState([]);
+  const [settlements, setSettlements] = useState([]);
+  const [hubStatus, setHubStatus] = useState(null);
+  const [windowFilter, setWindowFilter] = useState('');   // scopes the results table
+  const [busyWindow, setBusyWindow] = useState(null);     // window id being reconciled
+  const [windowNotice, setWindowNotice] = useState(null);
+
   // Currency used for every displayed figure, taken from the backend.
   const baseCurrency = summary?.base_currency || forecastCurrency || 'USD';
   const money = React.useMemo(() => makeMoneyFormatter(baseCurrency), [baseCurrency]);
@@ -96,17 +105,108 @@ function App() {
   // array (older builds) or a { items, total } envelope.
   const unwrap = payload => (Array.isArray(payload) ? payload : payload?.items ?? []);
 
-  const load = async () => {
-    const [s, r, a] = await Promise.all([
-      fetch(`${API}/dashboard/summary`, { headers }).then(x => x.json()),
-      fetch(`${API}/reconciliation/results?limit=1000`, { headers }).then(x => x.json()),
-      fetch(`${API}/anomalies?limit=500`, { headers }).then(x => x.json())
-    ]);
-    setSummary(s);
+  const jsonOrNull = url =>
+    fetch(url, { headers })
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null);
+
+  // Results are optionally scoped to one settlement window, which the backend
+  // resolves via the window's time interval.
+  const loadResults = async (windowId = windowFilter) => {
+    const scope = windowId ? `&settlement_window_id=${encodeURIComponent(windowId)}` : '';
+    const r = await jsonOrNull(`${API}/reconciliation/results?limit=1000${scope}`);
     setResults(unwrap(r));
     setResultTotal(Array.isArray(r) ? r.length : r?.total ?? 0);
+  };
+
+  const loadSettlement = async () => {
+    const [w, s, st] = await Promise.all([
+      jsonOrNull(`${API}/settlement/windows?limit=50`),
+      jsonOrNull(`${API}/settlement/settlements?limit=20`),
+      jsonOrNull(`${API}/webhooks/status`)
+    ]);
+    setWindows(unwrap(w));
+    setSettlements(unwrap(s));
+    setHubStatus(st?.integration ?? null);
+  };
+
+  const load = async () => {
+    const [s, a] = await Promise.all([
+      jsonOrNull(`${API}/dashboard/summary`),
+      jsonOrNull(`${API}/anomalies?limit=500`)
+    ]);
+    setSummary(s);
     setAnomalies(unwrap(a));
-    await fetchForecast(forecastDays);
+    await Promise.all([loadResults(), loadSettlement(), fetchForecast(forecastDays)]);
+  };
+
+  // Pull the latest windows from the hub, then refresh the table.
+  const syncWindows = async () => {
+    setWindowNotice('Pulling settlement windows from the hub...');
+    try {
+      const res = await fetch(`${API}/settlement/sync`, { method: 'POST', headers });
+      const body = await res.json();
+      setWindowNotice(
+        body?.enabled === false
+          ? 'Mojaloop integration is disabled (MOJALOOP_ENABLED=false).'
+          : body?.error
+            ? `Hub unreachable: ${body.error}`
+            : `Synced ${body.fetched ?? 0} window(s): ${body.created ?? 0} new, ${body.updated ?? 0} updated.`
+      );
+      await loadSettlement();
+    } catch (err) {
+      setWindowNotice(`Sync failed: ${err.message}`);
+    }
+  };
+
+  // Reconcile one window. Only results for transactions inside it are replaced.
+  const reconcileWindow = async windowId => {
+    setBusyWindow(windowId);
+    setWindowNotice(`Reconciling window ${windowId}...`);
+    try {
+      const res = await fetch(
+        `${API}/settlement/windows/${encodeURIComponent(windowId)}/reconcile`,
+        { method: 'POST', headers }
+      );
+      const body = await res.json();
+      if (!res.ok) {
+        setWindowNotice(`Window ${windowId}: ${body?.detail ?? 'reconciliation failed'}`);
+      } else {
+        setWindowNotice(
+          `Window ${windowId}: ${body.matched_count}/${body.total_reconciled} matched, ` +
+          `${body.partial_count} partial, ${body.flagged_count} held for review, ` +
+          `${body.anomalies_detected} anomalies (run ${body.run_id}).`
+        );
+      }
+      await load();
+    } catch (err) {
+      setWindowNotice(`Window ${windowId} failed: ${err.message}`);
+    } finally {
+      setBusyWindow(null);
+    }
+  };
+
+  const reconcilePending = async () => {
+    setBusyWindow('pending');
+    setWindowNotice('Reconciling every closed window that is still outstanding...');
+    try {
+      const res = await fetch(`${API}/settlement/windows/reconcile-pending`, {
+        method: 'POST',
+        headers
+      });
+      const body = await res.json();
+      setWindowNotice(body?.message ?? 'Done.');
+      await load();
+    } catch (err) {
+      setWindowNotice(`Failed: ${err.message}`);
+    } finally {
+      setBusyWindow(null);
+    }
+  };
+
+  const applyWindowFilter = async windowId => {
+    setWindowFilter(windowId);
+    await loadResults(windowId);
   };
 
   useEffect(() => {
@@ -219,6 +319,18 @@ function App() {
             <h2>
               Reconciliation results ({visible.length}
               {resultTotal > results.length ? ` of ${resultTotal}` : ''} records)
+              {windowFilter && (
+                <span className="scope-chip">
+                  settlement window {windowFilter}
+                  <button
+                    className="scope-clear"
+                    title="Show all windows"
+                    onClick={() => applyWindowFilter('')}
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
             </h2>
             <select value={filter} onChange={e => setFilter(e.target.value)}>
               <option value="">All statuses</option>
@@ -475,6 +587,148 @@ function App() {
                     <span style={{ color: '#34d399' }}>+{money(activePoint.inflow)}</span> / <span style={{ color: '#f87171' }}>-{money(activePoint.outflow)}</span>
                   </strong>
                 </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        {/* Settlement windows: the period boundaries reconciliation is scoped to */}
+        <article className="panel wide">
+          <div className="panel-head">
+            <div>
+              <h2>Settlement windows ({windows.length})</h2>
+              <p className="muted" style={{ fontSize: '0.8rem', margin: '2px 0 0 0' }}>
+                Pulled from the Mojaloop settlement API. A closed window is a fixed
+                boundary, so reconciling it is a repeatable unit of work.
+                {hubStatus && (
+                  <span className={`hub-dot ${hubStatus.hub?.reachable ? 'up' : 'down'}`}>
+                    {hubStatus.enabled === false
+                      ? 'integration disabled'
+                      : hubStatus.hub?.reachable
+                        ? `hub reachable (${hubStatus.hub.settlement_windows_visible ?? 0} visible)`
+                        : 'hub unreachable'}
+                  </span>
+                )}
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button className="forecast-btn" onClick={syncWindows}>⟳ Sync windows</button>
+              <button
+                className="forecast-btn"
+                onClick={reconcilePending}
+                disabled={busyWindow === 'pending' || !windows.some(w => w.is_reconcilable && !w.reconciled_at)}
+              >
+                {busyWindow === 'pending' ? 'Working...' : 'Reconcile all pending'}
+              </button>
+            </div>
+          </div>
+
+          {windowNotice && <div className="window-notice">{windowNotice}</div>}
+
+          {windows.length === 0 ? (
+            <p className="muted" style={{ fontSize: '0.85rem' }}>
+              No settlement windows stored yet. Press <strong>Sync windows</strong> to pull
+              them from the hub. This needs <code>MOJALOOP_ENABLED=true</code> and the
+              Testing Toolkit running.
+            </p>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Window</th>
+                    <th>State</th>
+                    <th>Covers</th>
+                    <th>Transactions</th>
+                    <th>Reconciled</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {windows.map(w => (
+                    <tr
+                      key={w.window_id}
+                      className={windowFilter === w.window_id ? 'row-active' : ''}
+                    >
+                      <td><strong>{w.window_id}</strong></td>
+                      <td><b className={`tag win-${w.state?.toLowerCase()}`}>{w.state}</b></td>
+                      <td className="muted" style={{ fontSize: '0.78rem' }}>
+                        {w.scope_from?.slice(0, 16).replace('T', ' ')}
+                        {' → '}
+                        {w.scope_to?.slice(0, 16).replace('T', ' ')}
+                      </td>
+                      <td>{w.transactions_in_window}</td>
+                      <td>
+                        {w.reconciled_at ? (
+                          <span className="muted" style={{ fontSize: '0.78rem' }}>
+                            run {w.last_run_id} · {w.reconciled_at.slice(0, 16).replace('T', ' ')}
+                          </span>
+                        ) : w.is_reconcilable ? (
+                          <b className="tag partial">pending</b>
+                        ) : (
+                          <span className="muted" style={{ fontSize: '0.78rem' }}>
+                            still open
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button
+                          className="link-btn"
+                          onClick={() => applyWindowFilter(w.window_id)}
+                          title="Filter the results table to this window"
+                        >
+                          View
+                        </button>
+                        {w.is_reconcilable && (
+                          <button
+                            className="link-btn primary"
+                            onClick={() => reconcileWindow(w.window_id)}
+                            disabled={busyWindow === w.window_id}
+                            title="Reconcile only the transactions inside this window"
+                          >
+                            {busyWindow === w.window_id ? '...' : 'Reconcile'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {settlements.length > 0 && (
+            <div style={{ marginTop: '14px' }}>
+              <h3 style={{ fontSize: '0.9rem', color: '#cfe0f5', margin: '0 0 6px 0' }}>
+                Settlements ({settlements.length})
+              </h3>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Settlement</th>
+                      <th>State</th>
+                      <th>Model</th>
+                      <th>Windows</th>
+                      <th>Net settled</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {settlements.map(s => (
+                      <tr key={s.settlement_id}>
+                        <td><strong>{s.settlement_id}</strong></td>
+                        <td><b className={`tag win-${s.state?.toLowerCase()}`}>{s.state}</b></td>
+                        <td className="muted" style={{ fontSize: '0.78rem' }}>{s.settlement_model || '—'}</td>
+                        <td>{s.window_ids?.join(', ') || '—'}</td>
+                        <td>
+                          {s.net_amount != null
+                            ? `${s.net_amount.toLocaleString()} ${s.currency || ''}`.trim()
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}

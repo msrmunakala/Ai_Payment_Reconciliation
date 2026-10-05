@@ -47,23 +47,6 @@ class PaginatedReconciliationResults(BaseModel):
     items: List[ReconciliationResultResponse] = Field(default_factory=list)
 
 
-class AnomalyResponse(BaseModel):
-    id: Optional[int] = None
-    transaction_id: str
-    type: str
-    severity: str
-    risk_score: float
-    explanation: str
-    status: str = AnomalyStatus.OPEN.value
-    detector: Optional[str] = None
-    run_id: Optional[int] = None
-    detected_at: Optional[datetime] = None
-    resolved_at: Optional[datetime] = None
-    resolution_note: Optional[str] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class ManualMatchRequest(BaseModel):
     transaction_id: str = Field(..., min_length=1)
     ledger_id: str = Field(..., min_length=1)

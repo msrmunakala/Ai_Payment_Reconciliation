@@ -13,7 +13,7 @@ Changes from the original router:
 * Anomalies can be resolved or ignored, and that triage is respected by later runs.
 """
 
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
@@ -72,6 +72,9 @@ def get_reconciliation_results(
     min_confidence: Optional[float] = Query(None, ge=0, le=100),
     max_confidence: Optional[float] = Query(None, ge=0, le=100),
     manual_only: bool = Query(False, description="Only human-confirmed matches"),
+    settlement_window_id: Optional[str] = Query(
+        None, description="Only results for transactions inside this settlement window"
+    ),
     limit: int = Query(settings.default_page_size, ge=1, le=settings.max_page_size),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -106,6 +109,26 @@ def get_reconciliation_results(
         query = query.filter(Reconciliation.match_confidence <= max_confidence)
     if manual_only:
         query = query.filter(Reconciliation.is_manual == 1)
+
+    if settlement_window_id:
+        from app.services import settlement_service
+
+        window = settlement_service.get_window(db, settlement_window_id)
+        if window is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Settlement window '{settlement_window_id}' is not held locally",
+            )
+        in_window = settlement_service.transaction_ids_in_window(db, window)
+        if not in_window:
+            return {
+                "total": 0,
+                "limit": limit,
+                "offset": offset,
+                "returned": 0,
+                "items": [],
+            }
+        query = query.filter(Reconciliation.transaction_id.in_(in_window))
 
     total = query.count()
     items = query.order_by(Reconciliation.id).offset(offset).limit(limit).all()

@@ -176,6 +176,8 @@ def list_settlements(
                 "settlement_model": row.settlement_model,
                 "window_ids": (row.window_ids or "").split(",") if row.window_ids else [],
                 "participant_count": row.participant_count,
+                "net_amount": row.net_amount,
+                "currency": row.currency,
                 "created_date": row.created_date.isoformat() if row.created_date else None,
                 "synced_at": row.synced_at.isoformat() if row.synced_at else None,
             }
