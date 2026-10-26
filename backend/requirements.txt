@@ -6,3 +6,5 @@ rapidfuzz>=3.0,<4.0
 numpy>=1.26,<3.0
 scikit-learn>=1.4,<2.0
 python-multipart>=0.0.9,<1.0
+pandas>=2.2,<3.0
+openpyxl>=3.1,<4.0

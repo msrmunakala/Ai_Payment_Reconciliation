@@ -84,6 +84,50 @@ def ingest_erp_excel(file_content: bytes, db: Session):
     return {"message": f"Successfully ingested {count} ERP records from Excel sheet"}
 
 
+def ingest_transactions_csv(file_content: bytes, db: Session):
+    text_data = file_content.decode("utf-8")
+    reader = csv.DictReader(io.StringIO(text_data))
+    count = 0
+
+    for row in reader:
+        tx_id = row.get("transaction_id") or row.get("Transaction ID") or f"TX-{uuid.uuid4().hex[:8].upper()}"
+        existing = db.query(Transaction).filter(Transaction.transaction_id == tx_id).first()
+        if not existing:
+            tx = Transaction(
+                transaction_id=tx_id,
+                reference_id=row.get("reference_id") or row.get("Reference ID") or f"REF-{uuid.uuid4().hex[:6].upper()}",
+                payer=row.get("payer") or row.get("Payer Name") or "Unknown Payer",
+                payee=row.get("payee") or row.get("Payee Name") or "Unknown Payee",
+                payer_fsp=row.get("payer_fsp") or row.get("Payer FSP") or "BankA",
+                payee_fsp=row.get("payee_fsp") or row.get("Payee FSP") or "BankB",
+                amount=float(row.get("amount") or row.get("Amount") or 0.0),
+                currency=row.get("currency") or row.get("Currency") or "USD",
+                status="SUCCESS",
+                transfer_state="COMMITTED",
+            )
+            db.add(tx)
+            count += 1
+
+    db.commit()
+    return {"message": f"Successfully ingested {count} ledger records from CSV"}
+
+
+def ingest_uploaded_file(source: str, filename: str, file_content: bytes, db: Session):
+    """Route an uploaded ledger, bank, or ERP file by source + extension."""
+    name = (filename or "").lower()
+    source = (source or "ledger").lower()
+    is_excel = name.endswith(".xlsx") or name.endswith(".xls")
+
+    if source in ("ledger", "mojaloop", "hub"):
+        return ingest_transactions_excel(file_content, db) if is_excel else ingest_transactions_csv(file_content, db)
+    if source in ("bank", "settlement", "statement"):
+        return ingest_bank_excel(file_content, db) if is_excel else ingest_bank_csv(file_content, db)
+    if source in ("erp", "invoice"):
+        return ingest_erp_excel(file_content, db) if is_excel else ingest_erp_csv(file_content, db)
+
+    raise ValueError(f"Unknown file source '{source}'. Use ledger, bank, or erp.")
+
+
 def ingest_bank_csv(file_content: bytes, db: Session):
     text_data = file_content.decode("utf-8")
     reader = csv.DictReader(io.StringIO(text_data))

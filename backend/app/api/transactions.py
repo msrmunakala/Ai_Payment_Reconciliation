@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database.db import get_db
@@ -14,9 +14,11 @@ from app.schemas.transaction_schema import (
 from app.services.ingestion_service import (
     ingest_bank_csv,
     ingest_erp_csv,
+    ingest_transactions_csv,
     ingest_transactions_excel,
     ingest_bank_excel,
     ingest_erp_excel,
+    ingest_uploaded_file,
 )
 
 router = APIRouter(
@@ -63,7 +65,32 @@ def get_erp_records(db: Session = Depends(get_db)):
     return db.query(ERPRecord).all()
 
 
+@router.post("/ingest")
+async def upload_reconciliation_file(
+    file: UploadFile = File(...),
+    source: str = Form("ledger"),
+    db: Session = Depends(get_db),
+):
+    """Upload a ledger, bank settlement, or ERP file for later matching."""
+    content = await file.read()
+    try:
+        result = ingest_uploaded_file(source, file.filename or "", content, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {exc}") from exc
+    result["filename"] = file.filename
+    result["source"] = source
+    return result
+
+
 # CSV Ingestion Routes
+@router.post("/ingest/ledger-csv")
+async def upload_ledger_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    content = await file.read()
+    return ingest_transactions_csv(content, db)
+
+
 @router.post("/ingest/bank-csv")
 async def upload_bank_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
     content = await file.read()

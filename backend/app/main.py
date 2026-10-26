@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database.db import Base, engine, get_db
@@ -23,6 +24,30 @@ from app.api.dashboard import router as dashboard_router
 from app.api.forecast import router as forecast_router
 
 API_KEY = os.getenv("API_KEY", "review2-demo-key")
+
+# ---------------------------------------------------------------------------
+# Live switch / settlement adapters are not connected in this demo.
+# When original Mojaloop and bank credentials are issued, set these env vars
+# and wire them in app.services.mojaloop_service (do not commit real secrets).
+#
+# MOJALOOP_BASE_URL = os.getenv("MOJALOOP_BASE_URL")              # e.g. https://fspiop.hub.example
+# MOJALOOP_API_KEY = os.getenv("MOJALOOP_API_KEY")
+# MOJALOOP_CLIENT_ID = os.getenv("MOJALOOP_CLIENT_ID")
+# MOJALOOP_CLIENT_SECRET = os.getenv("MOJALOOP_CLIENT_SECRET")
+# MOJALOOP_DFSP_ID = os.getenv("MOJALOOP_DFSP_ID")
+# BANK_SETTLEMENT_BASE_URL = os.getenv("BANK_SETTLEMENT_BASE_URL")  # RTGS / bank statement API
+# BANK_SETTLEMENT_API_KEY = os.getenv("BANK_SETTLEMENT_API_KEY")
+# CENTRAL_BANK_RTGS_API_KEY = os.getenv("CENTRAL_BANK_RTGS_API_KEY")
+# ---------------------------------------------------------------------------
+
+ANALYST_USERNAME = os.getenv("ANALYST_USERNAME", "analyst")
+ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "recon-secure")
+ANALYST_ROLE = "analysis_security"
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 def require_api_key(x_api_key: Optional[str] = Header(None)):
@@ -68,7 +93,7 @@ app.add_middleware(
 @app.middleware("http")
 async def protect_financial_endpoints(request: Request, call_next):
     """Keep health checks and API documentation public, but protect all financial data routes."""
-    public_paths = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+    public_paths = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/auth/login"}
     if request.method != "OPTIONS" and request.url.path not in public_paths:
         if request.headers.get("X-API-Key") != API_KEY:
             return JSONResponse(status_code=401, content={"detail": "A valid X-API-Key is required."})
@@ -80,6 +105,22 @@ app.include_router(transactions_router)
 app.include_router(reconciliation_router)
 app.include_router(dashboard_router)
 app.include_router(forecast_router)
+
+
+@app.post("/auth/login")
+def analyst_login(body: LoginRequest):
+    """Sign-in for analysis and security staff only. Reconciliation actions require this role."""
+    if body.username.strip() != ANALYST_USERNAME or body.password != ANALYST_PASSWORD:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials. Access is limited to analysis and security staff.",
+        )
+    return {
+        "display_name": "Security Analyst",
+        "role": ANALYST_ROLE,
+        "api_key": API_KEY,
+        "token": API_KEY,
+    }
 
 
 @app.get("/")

@@ -9,6 +9,7 @@ class DashboardSummary(BaseModel):
     unmatched_transactions: int
     match_rate: float
     anomaly_count: int
+    mismatched_count: int = 0
     total_reconciled_value: float
     synthetic_data_notice: str = "ERP records are synthetic demo data, generated for prototype validation."
 

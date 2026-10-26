@@ -1,885 +1,500 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { 
-  ShieldCheck, 
-  AlertTriangle, 
-  TrendingUp, 
-  RefreshCw, 
-  Download, 
-  Search, 
-  Filter, 
-  CheckCircle2, 
-  XCircle, 
-  Info, 
-  X, 
-  Layers, 
-  Activity, 
-  FileSpreadsheet, 
-  FileCode, 
-  ArrowUpRight, 
-  Check, 
-  ChevronRight, 
-  Sliders, 
-  Eye, 
-  HelpCircle, 
-  Zap, 
-  BarChart3,
-  ExternalLink,
-  DollarSign,
-  ArrowDownRight
-} from 'lucide-react';
+import { Download, LogOut, Plus, Search, X } from 'lucide-react';
 import './styles.css';
 
-const API = 'http://localhost:8000';
-const headers = { 'X-API-Key': 'review2-demo-key' };
+const API = import.meta.env.VITE_API_URL ?? '';
+const SESSION_KEY = 'recon.analyst.session';
 
-const formatMoney = (val) => 
-  new Intl.NumberFormat('en-IN', { 
-    style: 'currency', 
-    currency: 'INR', 
-    maximumFractionDigits: 0 
-  }).format(val || 0);
+/*
+ * Live Mojaloop hub and bank settlement APIs are not connected.
+ * File upload is the current ingestion path. When credentials are issued,
+ * set them in the environment — never commit real secrets.
+ *
+ * VITE_MOJALOOP_BASE_URL=
+ * VITE_MOJALOOP_API_KEY=
+ * VITE_MOJALOOP_CLIENT_ID=
+ * VITE_MOJALOOP_CLIENT_SECRET=
+ * VITE_MOJALOOP_DFSP_ID=
+ * VITE_BANK_SETTLEMENT_BASE_URL=
+ * VITE_BANK_SETTLEMENT_API_KEY=
+ * VITE_CENTRAL_BANK_RTGS_API_KEY=
+ */
+
+const money = (val) =>
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val || 0);
+
+function authHeaders(session) {
+  const headers = {};
+  if (session?.api_key) headers['X-API-Key'] = session.api_key;
+  if (session?.token) headers.Authorization = `Bearer ${session.token}`;
+  return headers;
+}
+
+function statusKind(status) {
+  if (status === 'matched') return 'matched';
+  if (status === 'partial' || status === 'pending_settlement' || status === 'amount_mismatch') return 'partial';
+  return 'unmatched';
+}
+
+function statusLabel(status) {
+  if (status === 'matched') return 'Matched';
+  if (status === 'partial' || status === 'amount_mismatch') return 'Partial / Fee discrepancy';
+  if (status === 'pending_settlement') return 'Pending settlement';
+  if (status === 'unmatched' || status === 'missing_in_erp') return 'Unmatched';
+  return (status || '').replaceAll('_', ' ');
+}
+
+function Login({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Sign-in failed');
+      if (data.role !== 'analysis_security') throw new Error('This workspace is limited to analysis and security staff.');
+      onLogin(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="login-page">
+      <form className="login-card" onSubmit={submit}>
+        <h1>Ledger vs. Settlement Reconciliation</h1>
+        <p className="lede">Sign in as analysis / security staff to upload files and run matching.</p>
+        <div className="field">
+          <label htmlFor="username">Username</label>
+          <input id="username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label htmlFor="password">Password</label>
+          <input id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        </div>
+        {error && <div className="login-error">{error}</div>}
+        <button className="btn btn-primary" type="submit" disabled={busy} style={{ marginTop: 18, width: '100%', justifyContent: 'center' }}>
+          {busy ? 'Signing in…' : 'Sign in'}
+        </button>
+        <p className="login-hint">Demo analyst: analyst / recon-secure. Live Mojaloop and bank settlement APIs are not connected; use Add files.</p>
+      </form>
+    </div>
+  );
+}
 
 function App() {
+  const [session, setSession] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+    } catch {
+      return null;
+    }
+  });
+
+  const persist = (next) => {
+    setSession(next);
+    if (next) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
+    else localStorage.removeItem(SESSION_KEY);
+  };
+
+  if (!session) return <Login onLogin={persist} />;
+  return <Dashboard session={session} onLogout={() => persist(null)} />;
+}
+
+function Dashboard({ session, onLogout }) {
   const [summary, setSummary] = useState(null);
   const [results, setResults] = useState([]);
   const [anomalies, setAnomalies] = useState([]);
   const [forecast, setForecast] = useState([]);
-  
-  // Filtering & View State
-  const [filter, setFilter] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'forecast', 'anomalies'
-  
-  // Forecast Interactive State
-  const [forecastDays, setForecastDays] = useState(7);
-  const [forecastView, setForecastView] = useState('trend'); // 'trend', 'bars', 'table'
-  const [activePoint, setActivePoint] = useState(null);
-
-  // Modal Inspector State
-  const [selectedTx, setSelectedTx] = useState(null);
-
-  // Loading & Action States
-  const [loading, setLoading] = useState(true);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [page, setPage] = useState('ledger');
+  const [tableTab, setTableTab] = useState('matched');
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [toasts, setToasts] = useState([]);
 
-  const addToast = (msg, type = 'info') => {
+  const headers = useMemo(() => authHeaders(session), [session]);
+
+  const toast = (msg) => {
     const id = Date.now();
-    setToasts(prev => [...prev, { id, msg, type }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 4000);
+    setToasts((prev) => [...prev, { id, msg }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500);
   };
 
-  const fetchForecast = async (days = forecastDays) => {
-    try {
-      const res = await fetch(`${API}/forecast?days=${days}`, { headers });
-      const f = await res.json();
-      setForecast(f);
-      if (f && f.length > 0 && !activePoint) {
-        setActivePoint(f[0]);
-      }
-    } catch (err) {
-      console.error('Error fetching forecast:', err);
-    }
-  };
-
-  const loadData = async () => {
-    setLoading(true);
+  const load = async () => {
+    const read = async (path) => {
+      const res = await fetch(`${API}${path}`, { headers });
+      if (!res.ok) throw new Error(path);
+      return res.json();
+    };
     try {
       const [s, r, a] = await Promise.all([
-        fetch(`${API}/dashboard/summary`, { headers }).then(x => x.json()),
-        fetch(`${API}/reconciliation/results`, { headers }).then(x => x.json()),
-        fetch(`${API}/anomalies`, { headers }).then(x => x.json())
+        read('/dashboard/summary'),
+        read('/reconciliation/results'),
+        read('/anomalies'),
       ]);
       setSummary(s);
-      setResults(r);
-      setAnomalies(a);
-      await fetchForecast(forecastDays);
-    } catch (err) {
-      console.error('Failed to load dataset:', err);
-      addToast('Error connecting to backend API', 'error');
-    } finally {
-      setLoading(false);
+      setResults(Array.isArray(r) ? r : []);
+      setAnomalies(Array.isArray(a) ? a : []);
+    } catch {
+      toast('Could not reach the reconciliation service.');
+      return;
+    }
+    try {
+      const f = await read('/forecast/?days=7');
+      setForecast(Array.isArray(f) ? f : []);
+    } catch {
+      setForecast([]);
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { load(); }, []);
 
-  const handleHorizonChange = (days) => {
-    setForecastDays(days);
-    fetchForecast(days);
-  };
-
-  const handleRunReconciliation = async () => {
-    setIsProcessing(true);
+  const runMatching = async () => {
+    setBusy(true);
     try {
       await fetch(`${API}/reconciliation/run`, { method: 'POST', headers });
-      await loadData();
-      addToast('Automated reconciliation engine executed successfully', 'success');
-    } catch (err) {
-      addToast('Failed to run reconciliation', 'error');
+      await load();
+      toast('Matching complete.');
+    } catch {
+      toast('Matching failed.');
     } finally {
-      setIsProcessing(false);
+      setBusy(false);
     }
   };
 
-  const handleResetDemo = async (count = 150) => {
-    setIsProcessing(true);
-    try {
-      await fetch(`${API}/demo/reset?count=${count}`, { method: 'POST', headers });
-      await loadData();
-      addToast(`Seeded ${count} synthetic records into sandbox environment`, 'success');
-    } catch (err) {
-      addToast('Failed to reset dataset', 'error');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const downloadJSON = () => {
-    fetch(`${API}/demo/export-json`, { headers })
-      .then(r => r.blob())
-      .then(b => {
-        const u = URL.createObjectURL(b), a = document.createElement('a');
-        a.href = u;
-        a.download = 'FinNexus_Reconciliation_Export.json';
-        a.click();
-        URL.revokeObjectURL(u);
-        addToast('JSON dataset exported', 'info');
-      });
-  };
-
-  const downloadCSV = () => {
+  const exportCsv = () => {
     fetch(`${API}/reports/export.csv`, { headers })
-      .then(r => r.blob())
-      .then(b => {
-        const u = URL.createObjectURL(b), a = document.createElement('a');
+      .then((r) => r.blob())
+      .then((b) => {
+        const u = URL.createObjectURL(b);
+        const a = document.createElement('a');
         a.href = u;
-        a.download = 'FinNexus_Reconciliation_Report.csv';
+        a.download = 'ledger-settlement-reconciliation.csv';
         a.click();
         URL.revokeObjectURL(u);
-        addToast('CSV reconciliation report exported', 'info');
       });
   };
 
-  // Filtered dataset
-  const filteredResults = results.filter(item => {
-    const matchesFilter = !filter || item.status === filter;
-    const searchLower = searchTerm.toLowerCase();
-    const matchesSearch = !searchTerm || 
-      item.transaction_id.toLowerCase().includes(searchLower) ||
-      (item.remarks && item.remarks.toLowerCase().includes(searchLower)) ||
-      (item.amount_difference && item.amount_difference.toString().includes(searchLower));
-    return matchesFilter && matchesSearch;
+  const q = search.toLowerCase();
+  const filtered = results.filter((row) => {
+    const kind = statusKind(row.status);
+    const tabOk = tableTab === 'matched' ? kind === 'matched' : kind !== 'matched';
+    const textOk =
+      !q ||
+      row.transaction_id.toLowerCase().includes(q) ||
+      (row.remarks || '').toLowerCase().includes(q) ||
+      (row.ledger_id || '').toLowerCase().includes(q);
+    return tabOk && textOk;
   });
 
-  // Forecast calculations
-  const totalInflow = forecast.reduce((acc, p) => acc + (p.inflow || p.predicted_amount * 1.25), 0);
-  const totalOutflow = forecast.reduce((acc, p) => acc + (p.outflow || p.predicted_amount * 0.25), 0);
-  const netLiquidity = forecast.reduce((acc, p) => acc + p.predicted_amount, 0);
-  const avgConfidenceMargin = forecast.length > 0 
-    ? forecast.reduce((acc, p) => acc + (p.upper_bound - p.lower_bound) / 2, 0) / forecast.length 
-    : 0;
-
-  // SVG Trend Chart layout calculations
-  const svgWidth = 720;
-  const svgHeight = 220;
-  const paddingX = 45;
-  const paddingY = 30;
-
-  let maxY = 1, minY = 0;
-  if (forecast.length > 0) {
-    maxY = Math.max(...forecast.map(p => Math.max(p.upper_bound || 0, p.inflow || 0, p.predicted_amount || 0))) * 1.12;
-    minY = Math.min(0, ...forecast.map(p => p.lower_bound || 0));
-  }
-
-  const getX = (i) => forecast.length <= 1 ? svgWidth / 2 : paddingX + (i / (forecast.length - 1)) * (svgWidth - 2 * paddingX);
-  const getY = (val) => svgHeight - paddingY - ((val - minY) / (maxY - minY)) * (svgHeight - 2 * paddingY);
-
-  let confidencePath = '', trendPath = '';
-  if (forecast.length > 0) {
-    const upperPoints = forecast.map((p, i) => `${getX(i)},${getY(p.upper_bound)}`);
-    const lowerPoints = [...forecast].reverse().map((p, i) => {
-      const origIdx = forecast.length - 1 - i;
-      return `${getX(origIdx)},${getY(p.lower_bound)}`;
-    });
-    confidencePath = `M ${upperPoints.join(' L ')} L ${lowerPoints.join(' L ')} Z`;
-    trendPath = `M ${forecast.map((p, i) => `${getX(i)},${getY(p.predicted_amount)}`).join(' L ')}`;
-  }
+  const mismatched = (summary?.mismatched_count ?? 0) || ((summary?.unmatched_transactions || 0) + (summary?.partial_matched || 0));
 
   return (
-    <div className="app-container">
-      {/* Top Navbar */}
-      <header className="top-navbar">
-        <div className="brand-section">
-          <div className="brand-logo-icon">
-            <Zap size={20} />
-          </div>
-          <div className="brand-title">
-            FinNexus Treasury
-            <span className="env-badge">Sandbox</span>
-          </div>
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <h1>Ledger vs. Settlement Reconciliation</h1>
+          <div className="sub">Hub transfers compared to bank settlement and ERP invoices</div>
         </div>
-
-        <div className="navbar-right">
-          <div className="system-status">
-            <span className="status-dot"></span>
-            Mojaloop Ledger Gateway • Online
-          </div>
-
-          <div className="user-profile">
-            <div className="avatar">AR</div>
-            <div className="user-info">
-              <span className="user-name">Alex Rivera</span>
-              <span className="user-role">Lead Treasury Ops</span>
-            </div>
-          </div>
+        <div className="session">
+          <span><strong>{session.display_name}</strong> · Analysis / Security</span>
+          <button className="btn btn-ghost" type="button" onClick={onLogout}><LogOut size={14} /> Sign out</button>
         </div>
       </header>
 
-      {/* Sub Header & Action Controls */}
-      <div className="sub-header">
-        <div className="sub-header-tabs">
-          <button 
-            className={`nav-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
-            onClick={() => setActiveTab('overview')}
-          >
-            <Layers size={16} />
-            Reconciliation Queue
-          </button>
-          <button 
-            className={`nav-tab-btn ${activeTab === 'forecast' ? 'active' : ''}`}
-            onClick={() => setActiveTab('forecast')}
-          >
-            <BarChart3 size={16} />
-            Liquidity Forecast
-          </button>
-          <button 
-            className={`nav-tab-btn ${activeTab === 'anomalies' ? 'active' : ''}`}
-            onClick={() => setActiveTab('anomalies')}
-          >
-            <AlertTriangle size={16} />
-            Priority Audit ({anomalies.length})
-          </button>
+      <div className="toolbar">
+        <div className="nav-tabs">
+          <button className={page === 'ledger' ? 'active' : ''} onClick={() => setPage('ledger')}>Queue</button>
+          <button className={page === 'exceptions' ? 'active' : ''} onClick={() => setPage('exceptions')}>Exceptions</button>
+          <button className={page === 'forecast' ? 'active' : ''} onClick={() => setPage('forecast')}>Liquidity</button>
         </div>
-
-        <div className="header-action-group">
-          <button 
-            className="btn btn-secondary" 
-            onClick={() => handleResetDemo(150)}
-            disabled={isProcessing}
-          >
-            <RefreshCw size={14} className={isProcessing ? 'spin' : ''} />
-            Seed 150 Records
-          </button>
-          <button className="btn btn-secondary" onClick={downloadJSON}>
-            <FileCode size={14} />
-            JSON
-          </button>
-          <button className="btn btn-emerald" onClick={downloadCSV}>
-            <FileSpreadsheet size={14} />
-            Export CSV
-          </button>
-          <button 
-            className="btn btn-primary" 
-            onClick={handleRunReconciliation}
-            disabled={isProcessing}
-          >
-            <Zap size={14} />
-            {isProcessing ? 'Processing...' : 'Run Auto-Reconcile'}
+        <div className="search">
+          <Search size={14} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter by reference, ledger ID, or variance reason" />
+        </div>
+        <div className="toolbar-actions">
+          <button className="btn" type="button" onClick={() => setUploadOpen(true)}><Plus size={14} /> Add files</button>
+          <button className="btn" type="button" onClick={exportCsv}><Download size={14} /> Export CSV</button>
+          <button className="btn btn-primary" type="button" onClick={runMatching} disabled={busy}>
+            {busy ? 'Running…' : 'Run matching'}
           </button>
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <main className="main-content">
-        {/* Sandbox Notice Banner */}
-        <div className="demo-banner">
-          <div className="demo-banner-left">
-            <Info size={16} color="#a5b4fc" />
-            <span>
-              <strong>Environment Active:</strong> Synthetic Mojaloop-to-ERP Settlement Testbed. Multi-dimensional similarity scoring enabled (Amount, Reference ID, Timestamp).
-            </span>
-          </div>
-          <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>Engine Version v2.0.4</span>
-        </div>
-
-        {/* Executive KPI Cards */}
-        <section className="kpi-grid">
-          <div className="kpi-card">
-            <div className="kpi-header">
-              <span className="kpi-title">Processed Volume</span>
-              <div className="kpi-icon-box"><Activity size={18} /></div>
-            </div>
-            <div className="kpi-value">{summary ? summary.total_transactions : 0}</div>
-            <div className="kpi-footer">
-              <span className="trend-pill up"><ArrowUpRight size={12} /> +14.2%</span>
-              <span>vs previous audit cycle</span>
-            </div>
-          </div>
-
-          <div className="kpi-card">
-            <div className="kpi-header">
-              <span className="kpi-title">Match Rate</span>
-              <div className="kpi-icon-box"><ShieldCheck size={18} /></div>
-            </div>
-            <div className="kpi-value">{summary ? `${summary.match_rate}%` : '0%'}</div>
-            <div className="kpi-footer">
-              <span className="trend-pill up"><Check size={12} /> High Accuracy</span>
-              <span>Multi-vector algorithm</span>
-            </div>
-          </div>
-
-          <div className="kpi-card">
-            <div className="kpi-header">
-              <span className="kpi-title">Flagged Anomalies</span>
-              <div className="kpi-icon-box" style={{ color: '#f59e0b' }}><AlertTriangle size={18} /></div>
-            </div>
-            <div className="kpi-value">{summary ? summary.anomaly_count : 0}</div>
-            <div className="kpi-footer">
-              <span className="trend-pill warning">Requires Audit</span>
-              <span>Action needed</span>
-            </div>
-          </div>
-
-          <div className="kpi-card">
-            <div className="kpi-header">
-              <span className="kpi-title">Reconciled Liquidity</span>
-              <div className="kpi-icon-box" style={{ color: '#10b981' }}><DollarSign size={18} /></div>
-            </div>
-            <div className="kpi-value">{summary ? formatMoney(summary.total_reconciled_value) : '₹0'}</div>
-            <div className="kpi-footer">
-              <span className="trend-pill up">Settled</span>
-              <span>Balanced ledger value</span>
-            </div>
-          </div>
+      <main className="main">
+        <section className="metrics">
+          <article className="metric">
+            <div className="label">Total records</div>
+            <div className="value">{summary ? summary.total_transactions : '—'}</div>
+          </article>
+          <article className="metric">
+            <div className="label">Matched rate</div>
+            <div className="value">{summary ? `${summary.match_rate}%` : '—'}</div>
+          </article>
+          <article className="metric">
+            <div className="label">Reconciled total</div>
+            <div className="value">{summary ? money(summary.total_reconciled_value) : '—'}</div>
+          </article>
+          <article className="metric">
+            <div className="label">Mismatched count</div>
+            <div className="value">{summary ? mismatched : '—'}</div>
+          </article>
         </section>
 
-        {/* View Tab 1: Overview & Reconciliation Queue */}
-        {(activeTab === 'overview' || activeTab === 'all') && (
+        {page === 'ledger' && (
           <section className="panel">
-            <div className="panel-header">
-              <div className="panel-title-group">
-                <h2 className="panel-title">
-                  <Layers size={18} color="#6366f1" />
-                  Transaction Reconciliation Queue
-                </h2>
-                <p className="panel-subtitle">
-                  Real-time matching of Mojaloop hub transfers against internal ERP statements.
-                </p>
+            <div className="panel-head">
+              <h2>Transaction matching</h2>
+              <div className="tabs">
+                <button className={tableTab === 'matched' ? 'active' : ''} onClick={() => setTableTab('matched')}>Matched</button>
+                <button className={tableTab === 'mismatched' ? 'active' : ''} onClick={() => setTableTab('mismatched')}>Mismatched</button>
               </div>
-
-              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                Showing <strong>{filteredResults.length}</strong> of <strong>{results.length}</strong> entries
-              </span>
+              <span className="muted">{filtered.length} shown</span>
             </div>
+            <ResultTable rows={filtered} onSelect={setSelected} />
+          </section>
+        )}
 
-            {/* Toolbar Controls */}
-            <div className="table-toolbar">
-              <div className="search-box">
-                <Search size={15} className="search-icon" />
-                <input 
-                  type="text" 
-                  className="search-input" 
-                  placeholder="Search by Transaction ID, remarks, or amount..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-                {searchTerm && (
-                  <X 
-                    size={14} 
-                    style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: 'var(--text-muted)' }}
-                    onClick={() => setSearchTerm('')} 
-                  />
-                )}
+        {page === 'exceptions' && (
+          <section className="panel">
+            <div className="panel-head">
+              <h2>Exception queue</h2>
+              <span className="muted">{anomalies.length} open</span>
+            </div>
+            {anomalies.length === 0 ? (
+              <div className="empty">No open exceptions.</div>
+            ) : (
+              anomalies.map((item) => (
+                <div className="exception" key={item.transaction_id + item.type}>
+                  <span className={`pill ${item.severity === 'high' ? 'unmatched' : 'partial'}`}>{item.severity}</span>
+                  <div>
+                    <div className="mono">{item.transaction_id}</div>
+                    <div style={{ color: 'var(--text-2)', marginTop: 2 }}>{item.explanation}</div>
+                  </div>
+                  <span className="muted">Risk {item.risk_score}</span>
+                </div>
+              ))
+            )}
+          </section>
+        )}
+
+        {page === 'forecast' && (
+          <section className="panel">
+            <div className="panel-head">
+              <h2>7-day liquidity forecast</h2>
+            </div>
+            <div className="forecast-row">
+              <div className="forecast-stat">
+                <div className="label">Projected inflow</div>
+                <div className="value">{money(forecast.reduce((n, p) => n + (p.inflow || 0), 0))}</div>
               </div>
-
-              <div className="filter-pills">
-                <button 
-                  className={`filter-btn ${filter === '' ? 'active' : ''}`}
-                  onClick={() => setFilter('')}
-                >
-                  All Statuses
-                </button>
-                <button 
-                  className={`filter-btn ${filter === 'matched' ? 'active' : ''}`}
-                  onClick={() => setFilter('matched')}
-                >
-                  Matched
-                </button>
-                <button 
-                  className={`filter-btn ${filter === 'partial' ? 'active' : ''}`}
-                  onClick={() => setFilter('partial')}
-                >
-                  Partial
-                </button>
-                <button 
-                  className={`filter-btn ${filter === 'unmatched' ? 'active' : ''}`}
-                  onClick={() => setFilter('unmatched')}
-                >
-                  Unmatched
-                </button>
+              <div className="forecast-stat">
+                <div className="label">Projected outflow</div>
+                <div className="value">{money(forecast.reduce((n, p) => n + (p.outflow || 0), 0))}</div>
+              </div>
+              <div className="forecast-stat">
+                <div className="label">Net position</div>
+                <div className="value">{money(forecast.reduce((n, p) => n + (p.predicted_amount || 0), 0))}</div>
               </div>
             </div>
-
-            {/* High Density Data Table */}
-            <div className="table-container">
-              <table className="data-table">
+            <div className="table-wrap">
+              <table>
                 <thead>
                   <tr>
-                    <th>Transaction Reference</th>
-                    <th>Status</th>
-                    <th>Confidence Score</th>
-                    <th>Amount Discrepancy</th>
-                    <th>Automated Match Explanation</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
+                    <th>Date</th>
+                    <th>Predicted net</th>
+                    <th>Lower bound</th>
+                    <th>Upper bound</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredResults.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                        No transaction records match the selected filter.
-                      </td>
+                  {forecast.map((p) => (
+                    <tr key={p.date}>
+                      <td className="mono">{p.date}</td>
+                      <td>{money(p.predicted_amount)}</td>
+                      <td>{money(p.lower_bound)}</td>
+                      <td>{money(p.upper_bound)}</td>
                     </tr>
-                  ) : (
-                    filteredResults.map((row) => {
-                      const conf = row.match_confidence || 0;
-                      const confColor = conf > 80 ? '#10b981' : conf > 50 ? '#f59e0b' : '#ef4444';
-
-                      return (
-                        <tr key={row.transaction_id} onClick={() => setSelectedTx(row)}>
-                          <td>
-                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                              <strong className="mono-text">{row.transaction_id}</strong>
-                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Mojaloop Ledger ID</span>
-                            </div>
-                          </td>
-                          <td>
-                            <span className={`status-badge ${row.status}`}>
-                              <span className="dot"></span>
-                              {row.status.replaceAll('_', ' ')}
-                            </span>
-                          </td>
-                          <td>
-                            <div className="confidence-cell">
-                              <div className="confidence-bar-track">
-                                <div 
-                                  className="confidence-bar-fill" 
-                                  style={{ width: `${conf}%`, background: confColor }} 
-                                />
-                              </div>
-                              <span className="mono-text" style={{ fontWeight: '700', fontSize: '0.78rem' }}>
-                                {conf}%
-                              </span>
-                            </div>
-                          </td>
-                          <td className="mono-text" style={{ fontWeight: row.amount_difference > 0 ? '700' : '400', color: row.amount_difference > 0 ? '#f87171' : 'inherit' }}>
-                            {row.amount_difference > 0 ? `+${formatMoney(row.amount_difference)}` : formatMoney(0)}
-                          </td>
-                          <td style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                            {row.remarks}
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <button 
-                              className="btn btn-outline" 
-                              style={{ padding: '4px 8px', fontSize: '0.72rem' }}
-                              onClick={(e) => { e.stopPropagation(); setSelectedTx(row); }}
-                            >
-                              <Eye size={13} />
-                              Inspect
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
+                  ))}
                 </tbody>
               </table>
             </div>
           </section>
         )}
-
-        {/* View Tab 2: Cash-Flow Forecast */}
-        {(activeTab === 'forecast' || activeTab === 'overview') && (
-          <section className="panel full-column">
-            <div className="panel-header">
-              <div className="panel-title-group">
-                <h2 className="panel-title">
-                  <TrendingUp size={18} color="#10b981" />
-                  Predictive Liquidity & Cash Flow Forecast
-                </h2>
-                <p className="panel-subtitle">
-                  Time-Series Ridge Regression model with 95% Confidence Interval bounds for treasury balance forecasting.
-                </p>
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <div className="filter-pills">
-                  <button 
-                    className={`filter-btn ${forecastDays === 7 ? 'active' : ''}`}
-                    onClick={() => handleHorizonChange(7)}
-                  >
-                    7 Days
-                  </button>
-                  <button 
-                    className={`filter-btn ${forecastDays === 14 ? 'active' : ''}`}
-                    onClick={() => handleHorizonChange(14)}
-                  >
-                    14 Days
-                  </button>
-                </div>
-
-                <div className="filter-pills">
-                  <button 
-                    className={`filter-btn ${forecastView === 'trend' ? 'active' : ''}`}
-                    onClick={() => setForecastView('trend')}
-                  >
-                    Trend & 95% CI
-                  </button>
-                  <button 
-                    className={`filter-btn ${forecastView === 'bars' ? 'active' : ''}`}
-                    onClick={() => setForecastView('bars')}
-                  >
-                    Inflow vs Outflow
-                  </button>
-                  <button 
-                    className={`filter-btn ${forecastView === 'table' ? 'active' : ''}`}
-                    onClick={() => setForecastView('table')}
-                  >
-                    Raw Data
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Forecast Mini KPIs */}
-            <div className="forecast-kpis">
-              <div className="forecast-mini-card">
-                <label>Projected Gross Inflow</label>
-                <div className="value" style={{ color: '#34d399' }}>{formatMoney(totalInflow)}</div>
-              </div>
-              <div className="forecast-mini-card">
-                <label>Projected Gross Outflow</label>
-                <div className="value" style={{ color: '#f87171' }}>{formatMoney(totalOutflow)}</div>
-              </div>
-              <div className="forecast-mini-card">
-                <label>Net Liquidity Position</label>
-                <div className="value" style={{ color: '#818cf8' }}>{formatMoney(netLiquidity)}</div>
-              </div>
-              <div className="forecast-mini-card">
-                <label>Avg Margin of Error (CI)</label>
-                <div className="value" style={{ color: '#fbbf24' }}>±{formatMoney(avgConfidenceMargin)}</div>
-              </div>
-            </div>
-
-            {/* SVG Trend Line & Confidence Area Chart */}
-            {forecastView === 'trend' && (
-              <div className="chart-card-wrapper">
-                <svg className="forecast-svg" viewBox={`0 0 ${svgWidth} ${svgHeight}`} preserveAspectRatio="none">
-                  {/* Grid Lines */}
-                  {[0.25, 0.5, 0.75].map((pct, idx) => {
-                    const yVal = paddingY + pct * (svgHeight - 2 * paddingY);
-                    return (
-                      <line 
-                        key={idx} 
-                        x1={paddingX} 
-                        y1={yVal} 
-                        x2={svgWidth - paddingX} 
-                        y2={yVal} 
-                        stroke="rgba(255,255,255,0.06)" 
-                        strokeDasharray="4 4" 
-                      />
-                    );
-                  })}
-
-                  {/* 95% Confidence Interval Shaded Band */}
-                  {confidencePath && <path d={confidencePath} className="forecast-band" />}
-
-                  {/* Predicted Cash Flow Line */}
-                  {trendPath && <path d={trendPath} className="forecast-line" />}
-
-                  {/* Data Points */}
-                  {forecast.map((p, i) => {
-                    const cx = getX(i);
-                    const cy = getY(p.predicted_amount);
-                    const isActive = activePoint && activePoint.date === p.date;
-                    return (
-                      <g key={p.date} onClick={() => setActivePoint(p)}>
-                        <text x={cx} y={svgHeight - 8} className="chart-axis-text">
-                          {p.date.slice(5)}
-                        </text>
-                        <circle
-                          cx={cx}
-                          cy={cy}
-                          r={isActive ? 6 : 4}
-                          className={`forecast-dot ${isActive ? 'active' : ''}`}
-                          onMouseEnter={() => setActivePoint(p)}
-                        />
-                      </g>
-                    );
-                  })}
-                </svg>
-
-                <div className="chart-legend-box">
-                  <div className="legend-item">
-                    <span className="legend-swatch"></span>
-                    <span>Predicted Net Inflow</span>
-                  </div>
-                  <div className="legend-item">
-                    <span className="legend-swatch band"></span>
-                    <span>95% Confidence Interval Area</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* View Mode 2: Inflow vs Outflow Bars */}
-            {forecastView === 'bars' && (
-              <div style={{ padding: '1rem', background: 'var(--bg-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '220px', gap: '10px' }}>
-                  {forecast.map(p => {
-                    const maxVal = Math.max(...forecast.map(x => Math.max(x.inflow || 0, x.outflow || 0, x.predicted_amount || 0)), 1);
-                    const inH = Math.max(10, ((p.inflow || p.predicted_amount * 1.25) / maxVal) * 180);
-                    const outH = Math.max(10, ((p.outflow || p.predicted_amount * 0.25) / maxVal) * 180);
-                    const isActive = activePoint && activePoint.date === p.date;
-
-                    return (
-                      <div 
-                        key={p.date} 
-                        style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', opacity: isActive ? 1 : 0.7 }}
-                        onClick={() => setActivePoint(p)}
-                        onMouseEnter={() => setActivePoint(p)}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', height: '180px', width: '100%', justifyContent: 'center' }}>
-                          <div style={{ width: '40%', background: '#34d399', height: `${inH}px`, borderRadius: '3px 3px 0 0' }} title={`Inflow: ${formatMoney(p.inflow)}`} />
-                          <div style={{ width: '40%', background: '#f87171', height: `${outH}px`, borderRadius: '3px 3px 0 0' }} title={`Outflow: ${formatMoney(p.outflow)}`} />
-                        </div>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{p.date.slice(5)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* View Mode 3: Raw Table */}
-            {forecastView === 'table' && (
-              <div className="table-container" style={{ marginTop: '10px' }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Predicted Net Amount</th>
-                      <th>Lower Bound (95% CI)</th>
-                      <th>Upper Bound (95% CI)</th>
-                      <th>Gross Inflow</th>
-                      <th>Gross Outflow</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {forecast.map(p => (
-                      <tr key={p.date} onClick={() => setActivePoint(p)}>
-                        <td><strong className="mono-text">{p.date}</strong></td>
-                        <td style={{ color: '#818cf8', fontWeight: '700' }} className="mono-text">{formatMoney(p.predicted_amount)}</td>
-                        <td style={{ color: 'var(--text-muted)' }} className="mono-text">{formatMoney(p.lower_bound)}</td>
-                        <td style={{ color: 'var(--text-muted)' }} className="mono-text">{formatMoney(p.upper_bound)}</td>
-                        <td style={{ color: '#34d399' }} className="mono-text">+{formatMoney(p.inflow)}</td>
-                        <td style={{ color: '#f87171' }} className="mono-text">-{formatMoney(p.outflow)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Selected Date Detail Banner */}
-            {activePoint && (
-              <div className="forecast-detail-banner">
-                <div>
-                  <h4 style={{ color: '#818cf8', fontWeight: '700', fontSize: '0.9rem' }}>
-                    {activePoint.date} Treasury Forecast Breakdown
-                  </h4>
-                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                    {new Date(activePoint.date).getDay() === 0 || new Date(activePoint.date).getDay() === 6 
-                      ? 'Weekend liquidity pattern (Reduced settlement throughput)' 
-                      : 'Regular business day clearing schedule'}
-                  </span>
-                </div>
-
-                <div style={{ display: 'flex', gap: '20px' }}>
-                  <div>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>Net Projected</span>
-                    <strong style={{ color: '#818cf8', fontSize: '0.95rem' }} className="mono-text">{formatMoney(activePoint.predicted_amount)}</strong>
-                  </div>
-                  <div>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>CI Range</span>
-                    <strong style={{ color: 'var(--text-primary)', fontSize: '0.95rem' }} className="mono-text">{formatMoney(activePoint.lower_bound)} - {formatMoney(activePoint.upper_bound)}</strong>
-                  </div>
-                  <div>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>Flow Ratio</span>
-                    <strong style={{ fontSize: '0.95rem' }} className="mono-text">
-                      <span style={{ color: '#34d399' }}>+{formatMoney(activePoint.inflow)}</span> / <span style={{ color: '#f87171' }}>-{formatMoney(activePoint.outflow)}</span>
-                    </strong>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* View Tab 3: Priority Anomalies Queue */}
-        {(activeTab === 'anomalies' || activeTab === 'overview') && (
-          <section className="panel">
-            <div className="panel-header">
-              <div className="panel-title-group">
-                <h2 className="panel-title">
-                  <AlertTriangle size={18} color="#f59e0b" />
-                  Priority Exception Audit Queue
-                </h2>
-                <p className="panel-subtitle">
-                  AI Risk Engine flagged anomalies requiring manual treasury review.
-                </p>
-              </div>
-
-              <button className="btn btn-outline" onClick={downloadCSV}>
-                <Download size={14} />
-                Export Audit Log
-              </button>
-            </div>
-
-            <div className="anomaly-list">
-              {anomalies.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                  No high-priority anomalies detected. All ledger records balanced.
-                </div>
-              ) : (
-                anomalies.map((item) => (
-                  <div key={item.transaction_id + item.type} className="anomaly-item">
-                    <span className={`severity-indicator ${item.severity}`}>
-                      {item.severity}
-                    </span>
-
-                    <div className="anomaly-content">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span className="anomaly-title">{item.transaction_id}</span>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>• {item.type.replaceAll('_', ' ')}</span>
-                      </div>
-                      <p className="anomaly-desc">{item.explanation}</p>
-                    </div>
-
-                    <div className="risk-badge">
-                      Risk Score: {item.risk_score}/100
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-        )}
       </main>
 
-      {/* Transaction Deep-Dive Inspector Modal */}
-      {selectedTx && (
-        <div className="modal-backdrop" onClick={() => setSelectedTx(null)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h3 style={{ fontSize: '1rem', fontWeight: '700', color: '#ffffff' }}>
-                  Transaction Inspector: {selectedTx.transaction_id}
-                </h3>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Side-by-side Mojaloop ledger vs ERP record comparison
-                </span>
-              </div>
-              <button className="btn btn-outline" style={{ padding: '4px' }} onClick={() => setSelectedTx(null)}>
-                <X size={18} />
-              </button>
+      {selected && <Inspect row={selected} onClose={() => setSelected(null)} />}
+      {uploadOpen && (
+        <UploadModal
+          headers={headers}
+          onClose={() => setUploadOpen(false)}
+          onDone={async (msg) => {
+            toast(msg);
+            setUploadOpen(false);
+            await load();
+          }}
+        />
+      )}
+      <div className="toast-wrap">
+        {toasts.map((t) => <div className="toast" key={t.id}>{t.msg}</div>)}
+      </div>
+    </div>
+  );
+}
+
+function ResultTable({ rows, onSelect }) {
+  if (!rows.length) return <div className="empty">No records in this view.</div>;
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Reference</th>
+            <th>Status</th>
+            <th>Confidence score</th>
+            <th>Variance</th>
+            <th>Variance reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const kind = statusKind(row.status);
+            const conf = row.match_confidence || 0;
+            const band = conf >= 80 ? 'high' : conf >= 50 ? 'mid' : 'low';
+            return (
+              <tr key={row.transaction_id} onClick={() => onSelect(row)}>
+                <td className="mono">{row.transaction_id}</td>
+                <td><span className={`pill ${kind}`}>{statusLabel(row.status)}</span></td>
+                <td>
+                  <div className="score">
+                    <div className="score-track"><div className={`score-fill ${band}`} style={{ width: `${conf}%` }} /></div>
+                    <span className="mono">{conf}%</span>
+                  </div>
+                </td>
+                <td className="mono">{row.amount_difference ? money(row.amount_difference) : money(0)}</td>
+                <td style={{ color: 'var(--text-2)', maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {row.remarks || '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Inspect({ row, onClose }) {
+  return (
+    <div className="backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <h3>{row.transaction_id}</h3>
+          <button className="btn btn-ghost" type="button" onClick={onClose}><X size={16} /></button>
+        </header>
+        <div className="body">
+          <div className="split">
+            <div className="box">
+              <h4>Ledger</h4>
+              <div className="row"><span>Reference</span><strong className="mono">{row.transaction_id}</strong></div>
+              <div className="row"><span>Status</span><strong>{statusLabel(row.status)}</strong></div>
+              <div className="row"><span>Confidence score</span><strong>{row.match_confidence}%</strong></div>
             </div>
-
-            <div className="modal-body">
-              <div className="diff-grid">
-                <div className="record-box">
-                  <h4>
-                    <Zap size={14} color="#6366f1" />
-                    Mojaloop Switch Record
-                  </h4>
-                  <div className="data-row">
-                    <span>Transaction ID:</span>
-                    <strong>{selectedTx.transaction_id}</strong>
-                  </div>
-                  <div className="data-row">
-                    <span>Status:</span>
-                    <strong style={{ color: selectedTx.status === 'matched' ? '#34d399' : '#fbbf24' }}>
-                      {selectedTx.status}
-                    </strong>
-                  </div>
-                  <div className="data-row">
-                    <span>Match Confidence:</span>
-                    <strong>{selectedTx.match_confidence}%</strong>
-                  </div>
-                </div>
-
-                <div className="record-box">
-                  <h4>
-                    <FileSpreadsheet size={14} color="#10b981" />
-                    ERP Bank Ledger Record
-                  </h4>
-                  <div className="data-row">
-                    <span>Discrepancy:</span>
-                    <strong style={{ color: selectedTx.amount_difference > 0 ? '#f87171' : '#34d399' }}>
-                      {formatMoney(selectedTx.amount_difference)}
-                    </strong>
-                  </div>
-                  <div className="data-row">
-                    <span>Verification Note:</span>
-                    <span style={{ fontSize: '0.78rem' }}>{selectedTx.remarks}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="record-box" style={{ background: 'rgba(99,102,241,0.06)', borderColor: 'rgba(99,102,241,0.2)' }}>
-                <h4 style={{ color: '#a5b4fc' }}>
-                  <Info size={14} />
-                  Algorithmic Rationale
-                </h4>
-                <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                  {selectedTx.remarks}. Multi-vector matching evaluated reference code alignment, timestamp variance within acceptable window, and exact currency amounts.
-                </p>
-              </div>
+            <div className="box">
+              <h4>Settlement</h4>
+              <div className="row"><span>Ledger ID</span><strong className="mono">{row.ledger_id || '—'}</strong></div>
+              <div className="row"><span>Ledger type</span><strong>{row.ledger_type || '—'}</strong></div>
+              <div className="row"><span>Variance</span><strong>{money(row.amount_difference)}</strong></div>
             </div>
-
-            <div className="modal-footer">
-              <button className="btn btn-outline" onClick={() => setSelectedTx(null)}>
-                Close
-              </button>
-              <button 
-                className="btn btn-primary"
-                onClick={() => {
-                  addToast(`Transaction ${selectedTx.transaction_id} verified`, 'success');
-                  setSelectedTx(null);
-                }}
-              >
-                <CheckCircle2 size={14} />
-                Confirm Resolution
-              </button>
-            </div>
+          </div>
+          <div className="box">
+            <h4>Variance reason</h4>
+            <p style={{ color: 'var(--text-2)' }}>{row.remarks || 'No note recorded.'}</p>
           </div>
         </div>
-      )}
+        <footer>
+          <button className="btn" type="button" onClick={onClose}>Close</button>
+        </footer>
+      </div>
+    </div>
+  );
+}
 
-      {/* Toast Notification Container */}
-      <div className="toast-container">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.type}`}>
-            <CheckCircle2 size={16} color={t.type === 'success' ? '#10b981' : '#6366f1'} />
-            <span>{t.msg}</span>
+function UploadModal({ headers, onClose, onDone }) {
+  const [source, setSource] = useState('ledger');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const inputRef = useRef(null);
+
+  const upload = async () => {
+    const files = inputRef.current?.files;
+    if (!files || !files.length) {
+      setError('Choose at least one CSV or Excel file.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      let last = null;
+      for (const file of files) {
+        const body = new FormData();
+        body.append('file', file);
+        body.append('source', source);
+        const res = await fetch(`${API}/transactions/ingest`, { method: 'POST', headers, body });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        last = data;
+      }
+      onDone(last?.message || 'Files added.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <h3>Add files</h3>
+          <button className="btn btn-ghost" type="button" onClick={onClose}><X size={16} /></button>
+        </header>
+        <div className="body">
+          <p style={{ color: 'var(--text-2)', fontSize: 13 }}>
+            Live Mojaloop and bank settlement feeds are not available. Upload a ledger extract, bank statement, or ERP file, then run matching.
+          </p>
+          <div className="source-grid">
+            <label><input type="radio" name="source" checked={source === 'ledger'} onChange={() => setSource('ledger')} /> Ledger (hub)</label>
+            <label><input type="radio" name="source" checked={source === 'bank'} onChange={() => setSource('bank')} /> Bank settlement</label>
+            <label><input type="radio" name="source" checked={source === 'erp'} onChange={() => setSource('erp')} /> ERP invoices</label>
           </div>
-        ))}
+          <div className="dropzone">
+            CSV or Excel (.csv, .xlsx)
+            <br />
+            <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" multiple />
+          </div>
+          {error && <div className="login-error">{error}</div>}
+        </div>
+        <footer>
+          <button className="btn" type="button" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="button" onClick={upload} disabled={busy}>{busy ? 'Uploading…' : 'Upload'}</button>
+        </footer>
       </div>
     </div>
   );

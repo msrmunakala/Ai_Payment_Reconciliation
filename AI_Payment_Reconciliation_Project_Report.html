@@ -139,7 +139,7 @@
         .progress-bar-fill {
             background: linear-gradient(90deg, var(--accent-blue), var(--accent-teal));
             height: 100%;
-            width: 72%;
+            width: 60%;
             border-radius: 11px;
             transition: width 1s ease-in-out;
         }
@@ -149,7 +149,7 @@
             right: 0;
             top: 0;
             height: 100%;
-            width: 28%;
+            width: 40%;
             background: rgba(245, 158, 11, 0.2);
             border-left: 2px dashed var(--accent-yellow);
         }
@@ -288,8 +288,8 @@
             </div>
             <div class="badge-group">
                 <span class="badge">Version 2.0.0</span>
-                <span class="badge green">72% Completed</span>
-                <span class="badge yellow">28% Remaining Pending</span>
+                <span class="badge green">60% Completed</span>
+                <span class="badge yellow">40% Remaining Pending</span>
             </div>
         </header>
 
@@ -298,8 +298,8 @@
             <h2>📊 Overall Coding Progress Breakdown</h2>
             <div class="progress-wrapper">
                 <div class="progress-header">
-                    <span>Completed Coding Progress: <strong>72%</strong></span>
-                    <span style="color: var(--accent-yellow)">Remaining Pending: <strong>28%</strong></span>
+                    <span>Completed Coding Progress: <strong>60%</strong></span>
+                    <span style="color: var(--accent-yellow)">Remaining Pending: <strong>40%</strong></span>
                 </div>
                 <div class="progress-bar-bg">
                     <div class="progress-bar-fill"></div>
@@ -307,7 +307,11 @@
                 </div>
             </div>
             <p style="color: var(--text-muted); font-size: 0.95rem;">
-                The project has achieved <strong>72% overall implementation progress</strong>. All core backend REST APIs, 7 SQLAlchemy ORM models, explainable AI fuzzy matching, anomaly risk scoring, Scikit-Learn ML liquidity forecasting, and the interactive Vite + React Treasury UI dashboard are fully operational. The remaining <strong>28% pending progress</strong> includes live Mojaloop hub TLS certificate integration, production PostgreSQL database migration, and full 106-record SRS benchmark dataset validation.
+                The project has achieved <strong>60% overall implementation progress</strong>. All core backend REST
+                APIs, 7 SQLAlchemy ORM models, explainable AI fuzzy matching, anomaly risk scoring, Scikit-Learn ML
+                liquidity forecasting, and the interactive Vite + React Treasury UI dashboard are operational. The
+                remaining <strong>40% pending progress</strong> includes live Mojaloop hub TLS certificate integration,
+                production PostgreSQL database migration, and full 106-record SRS benchmark dataset validation.
             </p>
         </section>
 
@@ -339,18 +343,18 @@
 
                 subgraph Storage ["4. Storage Layer"]
                 D1 <--> E1[(SQLAlchemy ORM / SQLite DB)]
-                D2 <--> E1
-                D3 <--> E1
-                D4 <--> E1
-                end
+                    D2 <--> E1
+                        D3 <--> E1
+                            D4 <--> E1
+                                end
 
-                subgraph Presentation ["5. Presentation Layer"]
-                E1 <--> F1[Vite + React Treasury Dashboard]
-                F1 --> G1[SVG Liquidity Forecast Charts]
-                F1 --> G2[Reconciliation Results & Filters]
-                F1 --> G3[Anomaly Alert Cards]
-                F1 --> G4[CSV & JSON Data Exporters]
-                end
+                                subgraph Presentation ["5. Presentation Layer"]
+                                E1 <--> F1[Vite + React Treasury Dashboard]
+                                    F1 --> G1[SVG Liquidity Forecast Charts]
+                                    F1 --> G2[Reconciliation Results & Filters]
+                                    F1 --> G3[Anomaly Alert Cards]
+                                    F1 --> G4[CSV & JSON Data Exporters]
+                                    end
             </div>
         </section>
 
@@ -423,7 +427,7 @@
 
         <!-- Coding Percentage Breakdown -->
         <section>
-            <h2>📈 3. Coding Percentage Breakdown – Completed (72%) vs. Pending (28%)</h2>
+            <h2>📈 3. Coding Percentage Breakdown – Completed (60%) vs. Pending (40%)</h2>
             <table>
                 <thead>
                     <tr>
@@ -586,6 +590,116 @@
                         <td>Fixed SVG width/height styling.</td>
                         <td>Refactored SVG with responsive `viewBox` & dynamic scaling.</td>
                         <td><span class="tag resolved">Resolved</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Future Plan of Action (Project Roadmap) -->
+        <section>
+            <h2>🚀 6. Future Plan of Action (Project Roadmap)</h2>
+            <p>The future development plan for the AI Payment Reconciliation Engine is structured into <strong>four strategic execution phases</strong> to transition the engine from prototype (72% complete) to full production deployment (100% complete):</p>
+            
+            <div class="mermaid" style="margin: 20px 0;">
+gantt
+    title AI Payment Reconciliation Engine Development Roadmap
+    dateFormat  YYYY-MM-DD
+    section Phase 1: Infra & Scale
+    PostgreSQL & Redis Migration     :active, p1_1, 2026-10-01, 2026-11-15
+    mTLS & Mojaloop Hub Certification: p1_2, 2026-11-01, 2026-12-15
+    High-Throughput GPU Matching     : p1_3, 2026-11-15, 2027-01-15
+    section Phase 2: Advanced AI/ML
+    Isolation Forest & Autoencoders  : p2_1, 2027-01-01, 2027-02-28
+    Prophet / TFT Liquidity Forecast : p2_2, 2027-02-01, 2027-03-31
+    Graph Neural Networks (GNN)      : p2_3, 2027-03-01, 2027-04-30
+    section Phase 3: ERP & Ecosystem
+    SAP / NetSuite Connectors        : p3_1, 2027-04-01, 2027-05-31
+    ISO 20022 Parsing Engine         : p3_2, 2027-05-01, 2027-06-30
+    Automated Dispute Workflows      : p3_3, 2027-06-01, 2027-07-31
+    section Phase 4: Enterprise Compliance
+    AML & Sanctions Screening        : p4_1, 2027-07-01, 2027-08-31
+    Immutable Cryptographic Audit Trail: p4_2, 2027-08-01, 2027-09-30
+    Role-Based Access Control (RBAC) : p4_3, 2027-09-01, 2027-10-31
+            </div>
+
+            <div class="feature-card" style="margin-top: 20px;">
+                <h3>Phase 1: Production Infrastructure & Scalability (Q4 2026)</h3>
+                <p><strong>Target:</strong> Scale capacity from 150 transactions/batch to 1M+ daily transactions.</p>
+                <ul>
+                    <li><strong>Enterprise Persistence & Caching:</strong> Migrate SQLite to HA PostgreSQL + Redis caching for real-time FX & session state.</li>
+                    <li><strong>Mojaloop Hub Integration:</strong> mTLS cert exchange, OAuth2/JWT security, async callback queues with exponential backoff.</li>
+                    <li><strong>High-Throughput Matching:</strong> Multi-threaded parallel batch execution and C-accelerated string indexing.</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Phase 2: Advanced AI/ML & Deep Learning Enhancements (Q1 2027)</h3>
+                <p><strong>Target:</strong> Elevate anomaly detection precision and long-horizon liquidity forecasting.</p>
+                <ul>
+                    <li><strong>Unsupervised Fraud Detection:</strong> Isolation Forests & Autoencoders for non-linear financial anomaly detection.</li>
+                    <li><strong>Deep Learning Liquidity Forecast:</strong> Facebook Prophet & Temporal Fusion Transformers (TFT) with macroeconomic inputs.</li>
+                    <li><strong>Graph Analytics:</strong> Graph Neural Networks (GNN) for multi-hop clearing house & central bank settlement tracing.</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Phase 3: ERP Connectors & Automated Dispute Orchestration (Q2 2027)</h3>
+                <p><strong>Target:</strong> Zero-touch exception handling and out-of-the-box ERP ecosystem integration.</p>
+                <ul>
+                    <li><strong>Native Connectors & ISO 20022:</strong> SAP S/4HANA, Oracle NetSuite, Dynamics 365, and ISO 20022 XML parsers (camt.053, pacs.008).</li>
+                    <li><strong>Automated Dispute Workflows:</strong> Multi-level UI approval workflow with automated debit/credit adjustment triggers.</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Phase 4: Security, Regulatory Compliance & Governance (Q3 2027)</h3>
+                <p><strong>Target:</strong> Regulatory compliance for Central Bank audits and enterprise security standards.</p>
+                <ul>
+                    <li><strong>Real-Time AML & Sanctions:</strong> Live OFAC, UN, and EU sanctions screening integration.</li>
+                    <li><strong>Cryptographic Audit Logs:</strong> Immutable SHA-256 append-only transaction audit ledger.</li>
+                    <li><strong>Enterprise RBAC:</strong> SSO (SAML 2.0 / OIDC) fine-grained multi-tenant role control.</li>
+                </ul>
+            </div>
+
+            <h3 style="margin-top: 24px;">Strategic Roadmap Summary Matrix</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Phase</th>
+                        <th>Milestone / Focus</th>
+                        <th>Key Deliverables</th>
+                        <th>Timeline</th>
+                        <th>Expected Impact</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Phase 1</strong></td>
+                        <td>Infra & Scale</td>
+                        <td>PostgreSQL DB migration, Redis caching, mTLS security, 1M+ throughput</td>
+                        <td>Q4 2026</td>
+                        <td>Production deployment readiness on Mojaloop DPI</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Phase 2</strong></td>
+                        <td>Advanced AI/ML</td>
+                        <td>Isolation Forest anomaly detection, TFT/Prophet forecasting, GNN graphs</td>
+                        <td>Q1 2026</td>
+                        <td>99.5%+ match accuracy & zero-day fraud capture</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Phase 3</strong></td>
+                        <td>ERP & Connectors</td>
+                        <td>SAP/NetSuite connectors, ISO 20022 parser, auto-dispute workflows</td>
+                        <td>Q2 2026</td>
+                        <td>80% reduction in manual treasury intervention</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Phase 4</strong></td>
+                        <td>Governance & AML</td>
+                        <td>Sanctions screening, SHA-256 audit ledger, RBAC + SSO multi-tenancy</td>
+                        <td>Q3 2026</td>
+                        <td>Full regulatory compliance for Central Bank audits</td>
                     </tr>
                 </tbody>
             </table>
