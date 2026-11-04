@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      API_KEY: ${API_KEY:-review2-demo-key}
+      ANALYST_USERNAME: ${ANALYST_USERNAME:-analyst}
+      ANALYST_PASSWORD: ${ANALYST_PASSWORD:-recon-secure}
+      # MOJALOOP_BASE_URL: ${MOJALOOP_BASE_URL:-}
+      # MOJALOOP_API_KEY: ${MOJALOOP_API_KEY:-}
+      # BANK_SETTLEMENT_BASE_URL: ${BANK_SETTLEMENT_BASE_URL:-}
+      # BANK_SETTLEMENT_API_KEY: ${BANK_SETTLEMENT_API_KEY:-}
+      # CENTRAL_BANK_RTGS_API_KEY: ${CENTRAL_BANK_RTGS_API_KEY:-}
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
