@@ -5,6 +5,10 @@ import './styles.css';
 
 const API = import.meta.env.VITE_API_URL ?? '';
 const SESSION_KEY = 'recon.analyst.session';
+const localDate = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
 
 /*
  * Live Mojaloop hub and bank settlement APIs are not connected.
@@ -75,7 +79,7 @@ function Login({ onLogin }) {
   return (
     <div className="login-page">
       <form className="login-card" onSubmit={submit}>
-        <h1>Ledger vs. Settlement Reconciliation</h1>
+        <h1>Payment_reconciliation System</h1>
         <p className="lede">Sign in as analysis / security staff to upload files and run matching.</p>
         <div className="field">
           <label htmlFor="username">Username</label>
@@ -119,12 +123,20 @@ function Dashboard({ session, onLogout }) {
   const [results, setResults] = useState([]);
   const [anomalies, setAnomalies] = useState([]);
   const [forecast, setForecast] = useState([]);
+  const [forecastLoading, setForecastLoading] = useState(true);
+  const [forecastFallback, setForecastFallback] = useState(false);
+  const [forecastFrequency, setForecastFrequency] = useState('daily');
+  const [schedulerStatus, setSchedulerStatus] = useState(null);
+  const [scheduleMode, setScheduleMode] = useState('daily');
+  const [scheduleHours, setScheduleHours] = useState(6);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
   const [page, setPage] = useState('ledger');
   const [tableTab, setTableTab] = useState('matched');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(localDate);
   const [toasts, setToasts] = useState([]);
 
   const headers = useMemo(() => authHeaders(session), [session]);
@@ -135,6 +147,34 @@ function Dashboard({ session, onLogout }) {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500);
   };
 
+  const loadTreasury = async () => {
+    setForecastLoading(true);
+    try {
+      const [forecastRes, schedulerRes] = await Promise.all([
+        fetch(`${API}/treasury/forecast?periods=30&frequency=${forecastFrequency}`, { headers }),
+        fetch(`${API}/treasury/scheduler`, { headers }),
+      ]);
+      if (!forecastRes.ok || !schedulerRes.ok) throw new Error('Treasury data unavailable');
+      const [forecastData, schedulerData] = await Promise.all([forecastRes.json(), schedulerRes.json()]);
+      setForecast((forecastData.forecast || []).map((point) => ({
+        date: point.ds,
+        predicted_amount: point.yhat,
+        lower_bound: point.yhat_lower,
+        upper_bound: point.yhat_upper,
+        inflow: Math.max(point.yhat, 0),
+        outflow: Math.max(-point.yhat, 0),
+      })));
+      setForecastFallback(Boolean(forecastData.used_fallback));
+      setSchedulerStatus(schedulerData);
+    } catch {
+      setForecast([]);
+      setForecastFallback(false);
+      setSchedulerStatus(null);
+    } finally {
+      setForecastLoading(false);
+    }
+  };
+
   const load = async () => {
     const read = async (path) => {
       const res = await fetch(`${API}${path}`, { headers });
@@ -143,37 +183,62 @@ function Dashboard({ session, onLogout }) {
     };
     try {
       const [s, r, a] = await Promise.all([
-        read('/dashboard/summary'),
-        read('/reconciliation/results'),
-        read('/anomalies'),
+        read(`/dashboard/summary?date=${encodeURIComponent(selectedDate)}`),
+        read(`/reconciliation/results?date=${encodeURIComponent(selectedDate)}`),
+        read(`/anomalies?date=${encodeURIComponent(selectedDate)}`),
       ]);
       setSummary(s);
       setResults(Array.isArray(r) ? r : []);
       setAnomalies(Array.isArray(a) ? a : []);
+      return Array.isArray(r) ? r : [];
     } catch {
       toast('Could not reach the reconciliation service.');
-      return;
-    }
-    try {
-      const f = await read('/forecast/?days=7');
-      setForecast(Array.isArray(f) ? f : []);
-    } catch {
-      setForecast([]);
+      return null;
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [selectedDate]);
+  useEffect(() => {
+    if (page === 'forecast') loadTreasury();
+  }, [forecastFrequency, page]);
 
   const runMatching = async () => {
     setBusy(true);
     try {
-      await fetch(`${API}/reconciliation/run`, { method: 'POST', headers });
-      await load();
-      toast('Matching complete.');
-    } catch {
-      toast('Matching failed.');
+      const res = await fetch(`${API}/reconciliation/run?date=${encodeURIComponent(selectedDate)}`, { method: 'POST', headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Reconciliation failed');
+      const refreshedResults = await load();
+      if (refreshedResults?.length && !refreshedResults.some((row) => statusKind(row.status) === 'matched')) {
+        setTableTab('mismatched');
+      }
+      if (page === 'forecast') loadTreasury();
+      toast(data.message || 'Reconciliation complete.');
+    } catch (err) {
+      toast(err.message || 'Reconciliation failed.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveSchedule = async () => {
+    setScheduleBusy(true);
+    try {
+      const isInterval = scheduleMode === 'interval';
+      const res = await fetch(`${API}/treasury/scheduler/${isInterval ? 'interval' : 'daily'}`, {
+        method: 'PUT',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(isInterval ? { hours: Number(scheduleHours) } : { hour: 0, minute: 0 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Could not update schedule');
+      setSchedulerStatus((previous) => ({ ...previous, ...data }));
+      loadTreasury();
+      toast('Automatic reconciliation schedule updated.');
+    } catch (err) {
+      toast(err.message || 'Could not update schedule.');
+    } finally {
+      setScheduleBusy(false);
     }
   };
 
@@ -208,7 +273,7 @@ function Dashboard({ session, onLogout }) {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <h1>Ledger vs. Settlement Reconciliation</h1>
+          <h1>Payment_reconciliation System</h1>
           <div className="sub">Hub transfers compared to bank settlement and ERP invoices</div>
         </div>
         <div className="session">
@@ -227,14 +292,25 @@ function Dashboard({ session, onLogout }) {
           <Search size={14} />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter by reference, ledger ID, or variance reason" />
         </div>
+        <label className="date-filter">
+          <span>Date</span>
+          <input type="date" value={selectedDate} onChange={(event) => event.target.value && setSelectedDate(event.target.value)} />
+        </label>
         <div className="toolbar-actions">
           <button className="btn" type="button" onClick={() => setUploadOpen(true)}><Plus size={14} /> Add files</button>
           <button className="btn" type="button" onClick={exportCsv}><Download size={14} /> Export CSV</button>
           <button className="btn btn-primary" type="button" onClick={runMatching} disabled={busy}>
-            {busy ? 'Running…' : 'Run matching'}
+            {busy ? 'Running…' : 'Run reconciliation'}
           </button>
         </div>
       </div>
+
+      {busy && (
+        <div className="run-status" role="status" aria-live="polite">
+          <span className="run-spinner" />
+          Reconciling records for {selectedDate}. Results will appear as soon as matching finishes.
+        </div>
+      )}
 
       <main className="main">
         <section className="metrics">
@@ -296,8 +372,40 @@ function Dashboard({ session, onLogout }) {
         {page === 'forecast' && (
           <section className="panel">
             <div className="panel-head">
-              <h2>7-day liquidity forecast</h2>
+              <h2>Cash position forecast</h2>
+              <div className="treasury-controls">
+                <div className="tabs">
+                  <button className={forecastFrequency === 'daily' ? 'active' : ''} onClick={() => setForecastFrequency('daily')}>Daily</button>
+                  <button className={forecastFrequency === 'weekly' ? 'active' : ''} onClick={() => setForecastFrequency('weekly')}>Weekly</button>
+                </div>
+                <div className="schedule-controls">
+                  <span>Auto reconcile</span>
+                  <select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value)}>
+                    <option value="daily">Daily at 00:00 UTC</option>
+                    <option value="interval">Every N hours</option>
+                  </select>
+                  {scheduleMode === 'interval' && (
+                    <input aria-label="Hours between runs" type="number" min="1" max="720" value={scheduleHours} onChange={(event) => setScheduleHours(event.target.value)} />
+                  )}
+                  <button className="btn btn-primary" type="button" onClick={saveSchedule} disabled={scheduleBusy}>
+                    {scheduleBusy ? 'Saving…' : 'Save schedule'}
+                  </button>
+                </div>
+              </div>
             </div>
+            <div className="scheduler-status">
+              <span className={`pill ${schedulerStatus?.running ? 'matched' : 'unmatched'}`}>
+                Scheduler {schedulerStatus?.running ? 'active' : 'unavailable'}
+              </span>
+              <span>Trigger: {schedulerStatus?.trigger || '—'}</span>
+              <span>Next run: {schedulerStatus?.next_run_at ? new Date(schedulerStatus.next_run_at).toLocaleString() : '—'}</span>
+              <span>Last run: {schedulerStatus?.last_run ? `${schedulerStatus.last_run.status} · ${schedulerStatus.last_run.total_reconciled} records` : 'No automated runs yet'}</span>
+            </div>
+            {forecastFallback && <p className="forecast-note">Limited history or Prophet unavailable; displaying the fallback forecast.</p>}
+            {forecastLoading ? (
+              <div className="empty">Generating forecast…</div>
+            ) : (
+              <>
             <div className="forecast-row">
               <div className="forecast-stat">
                 <div className="label">Projected inflow</div>
@@ -316,8 +424,8 @@ function Dashboard({ session, onLogout }) {
               <table>
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Predicted net</th>
+                    <th>{forecastFrequency === 'weekly' ? 'Week of' : 'Date'}</th>
+                    <th>Predicted cash position</th>
                     <th>Lower bound</th>
                     <th>Upper bound</th>
                   </tr>
@@ -334,6 +442,8 @@ function Dashboard({ session, onLogout }) {
                 </tbody>
               </table>
             </div>
+              </>
+            )}
           </section>
         )}
       </main>
@@ -342,11 +452,13 @@ function Dashboard({ session, onLogout }) {
       {uploadOpen && (
         <UploadModal
           headers={headers}
+          dataDate={selectedDate}
           onClose={() => setUploadOpen(false)}
           onDone={async (msg) => {
             toast(msg);
             setUploadOpen(false);
             await load();
+            if (page === 'forecast') loadTreasury();
           }}
         />
       )}
@@ -435,7 +547,7 @@ function Inspect({ row, onClose }) {
   );
 }
 
-function UploadModal({ headers, onClose, onDone }) {
+function UploadModal({ headers, dataDate, onClose, onDone }) {
   const [source, setSource] = useState('ledger');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -450,17 +562,17 @@ function UploadModal({ headers, onClose, onDone }) {
     setBusy(true);
     setError('');
     try {
-      let last = null;
-      for (const file of files) {
+      const uploadedFiles = await Promise.all(Array.from(files, async (file) => {
         const body = new FormData();
         body.append('file', file);
         body.append('source', source);
+        body.append('data_date', dataDate);
         const res = await fetch(`${API}/transactions/ingest`, { method: 'POST', headers, body });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Upload failed');
-        last = data;
-      }
-      onDone(last?.message || 'Files added.');
+        return data;
+      }));
+      onDone(`${uploadedFiles.length} file${uploadedFiles.length === 1 ? '' : 's'} uploaded for ${dataDate}. Run reconciliation for this date after all sources are uploaded.`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -484,6 +596,7 @@ function UploadModal({ headers, onClose, onDone }) {
             <label><input type="radio" name="source" checked={source === 'bank'} onChange={() => setSource('bank')} /> Bank settlement</label>
             <label><input type="radio" name="source" checked={source === 'erp'} onChange={() => setSource('erp')} /> ERP invoices</label>
           </div>
+          <p className="upload-date-note">Imported records will be dated <strong>{dataDate}</strong>.</p>
           <div className="dropzone">
             CSV or Excel (.csv, .xlsx)
             <br />

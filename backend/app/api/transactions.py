@@ -1,6 +1,8 @@
-from typing import List
+from datetime import date
+from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.database.db import get_db
 from app.models.transaction import Transaction
@@ -69,12 +71,15 @@ def get_erp_records(db: Session = Depends(get_db)):
 async def upload_reconciliation_file(
     file: UploadFile = File(...),
     source: str = Form("ledger"),
+    data_date: Optional[date] = Form(None),
     db: Session = Depends(get_db),
 ):
     """Upload a ledger, bank settlement, or ERP file for later matching."""
     content = await file.read()
     try:
-        result = ingest_uploaded_file(source, file.filename or "", content, db)
+        result = await run_in_threadpool(
+            ingest_uploaded_file, source, file.filename or "", content, db, data_date
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

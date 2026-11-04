@@ -162,6 +162,28 @@ button, input, select { font-family: inherit; }
   margin-left: auto;
 }
 
+.run-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.run-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: run-spin 0.8s linear infinite;
+}
+
+@keyframes run-spin { to { transform: rotate(360deg); } }
+
 .search {
   position: relative;
   flex: 1;
@@ -188,6 +210,27 @@ button, input, select { font-family: inherit; }
   transform: translateY(-50%);
   color: var(--text-3);
 }
+
+.date-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text-2);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.date-filter input {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  background: var(--surface);
+  color-scheme: dark;
+}
+
+.date-filter input:focus { outline: none; border-color: #4a6d99; }
 
 .tabs {
   display: flex;
@@ -411,6 +454,37 @@ tbody tr { cursor: pointer; }
   padding: 16px;
 }
 
+.treasury-controls, .schedule-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.schedule-controls { color: var(--text-2); font-size: 12px; }
+.schedule-controls select, .schedule-controls input {
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: var(--surface);
+}
+.schedule-controls input { width: 72px; }
+
+.scheduler-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.forecast-note { padding: 8px 16px 0; color: var(--partial); font-size: 12px; }
+
 .forecast-stat .label { font-size: 12px; color: var(--text-3); }
 .forecast-stat .value { font-size: 16px; font-weight: 600; margin-top: 4px; }
 
@@ -509,6 +583,8 @@ tbody tr { cursor: pointer; }
 }
 
 .source-grid input { margin-right: 6px; }
+.upload-date-note { margin: 14px 0; color: var(--text-2); font-size: 12px; }
+.upload-date-note strong { color: var(--text); }
 .source-grid label:has(input:checked) {
   border-color: #4a6d99;
   color: var(--text);

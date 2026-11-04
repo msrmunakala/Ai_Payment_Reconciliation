@@ -1,7 +1,8 @@
 import random
 import uuid
-from datetime import datetime, timedelta
-from rapidfuzz import fuzz
+from datetime import date, datetime, timedelta
+import numpy as np
+from rapidfuzz import fuzz, process
 from sqlalchemy.orm import Session
 
 from app.models.transaction import Transaction
@@ -11,153 +12,237 @@ from app.services.fx_service import convert_to_usd, init_fx_rates
 from app.services.forecasting_service import generate_forecast
 
 
-def run_reconciliation(db: Session):
-    # Fetch un-reconciled or all transactions across ledgers
-    transactions = db.query(Transaction).all()
-    bank_records = db.query(BankTransaction).all()
-    erp_records = db.query(ERPRecord).all()
-
-    # Clear old results to support fresh run
-    db.query(Reconciliation).delete()
-    db.query(Anomaly).delete()
+def run_reconciliation(db: Session, target_date: date = None):
+    # A selected date scopes the run to the ledger, bank, and ERP records loaded for that day.
+    if target_date:
+        start = datetime.combine(target_date, datetime.min.time())
+        end = start + timedelta(days=1)
+        transactions = db.query(Transaction).filter(
+            Transaction.created_at >= start, Transaction.created_at < end
+        ).all()
+        bank_records = db.query(BankTransaction).filter(
+            BankTransaction.value_date >= start, BankTransaction.value_date < end
+        ).all()
+        erp_records = db.query(ERPRecord).filter(
+            ERPRecord.posting_date >= start, ERPRecord.posting_date < end
+        ).all()
+        if not transactions:
+            return {
+                "status": "success",
+                "total_reconciled": 0,
+                "matched_count": 0,
+                "anomalies_detected": 0,
+                "message": f"No ledger transactions were found for {target_date.isoformat()}.",
+            }
+        transaction_ids = [tx.transaction_id for tx in transactions]
+        db.query(Reconciliation).filter(
+            Reconciliation.transaction_id.in_(transaction_ids)
+        ).delete(synchronize_session=False)
+        db.query(Anomaly).filter(
+            Anomaly.transaction_id.in_(transaction_ids)
+        ).delete(synchronize_session=False)
+    else:
+        transactions = db.query(Transaction).all()
+        bank_records = db.query(BankTransaction).all()
+        erp_records = db.query(ERPRecord).all()
+        # Preserve the original all-record refresh for API clients without a selected date.
+        db.query(Reconciliation).delete()
+        db.query(Anomaly).delete()
     db.commit()
 
     reconciled_count = 0
     matched_count = 0
     anomaly_count = 0
 
+    # Convert each amount once and calculate fuzzy name scores in native code by batches.
+    bank_usd_amounts = np.asarray(
+        [convert_to_usd(bank.amount, bank.currency) for bank in bank_records],
+        dtype=np.float64,
+    )
+    bank_names = [(bank.counterparty or "").lower() for bank in bank_records]
+    bank_references = {}
+    for index, bank in enumerate(bank_records):
+        reference = (bank.reference_number or "").strip()
+        if reference:
+            bank_references.setdefault(reference, []).append(index)
+    erp_usd_amounts = np.asarray(
+        [convert_to_usd(erp.expected_amount, erp.currency) for erp in erp_records],
+        dtype=np.float64,
+    )
+    erp_names = [(erp.customer_vendor_name or "").lower() for erp in erp_records]
+    erp_references = {}
+    for index, erp in enumerate(erp_records):
+        reference = (erp.invoice_number or "").strip()
+        if reference:
+            erp_references.setdefault(reference, []).append(index)
+
     # Track matched ledger records to detect duplicate charges or missing settlements
-    matched_bank_ids = set()
-    matched_erp_ids = set()
+    available_banks = np.ones(len(bank_records), dtype=bool)
+    available_erp_records = np.ones(len(erp_records), dtype=bool)
     seen_amounts = {}
 
-    for tx in transactions:
-        tx_usd_amount = convert_to_usd(tx.amount, tx.currency, db)
-        best_match = None
-        best_confidence = 0.0
-        match_type = None
-        ledger_id = None
-        amount_diff = 0.0
-
-        # Check duplicate charge anomaly
-        amount_key = (tx.payer, tx.amount, tx.currency)
-        if amount_key in seen_amounts:
-            prev_tx_id = seen_amounts[amount_key]
-            anomaly = Anomaly(
-                transaction_id=tx.transaction_id,
-                anomaly_type="duplicate_charge",
-                severity="high",
-                risk_score=0.92,
-                explanation=f"Potential duplicate charge detected. Identical amount {tx.currency} {tx.amount} and payer '{tx.payer}' matches previous transaction '{prev_tx_id}'."
+    candidate_count = max(len(bank_records) * 2, len(erp_records), 1)
+    batch_size = max(1, min(64, 1_000_000 // candidate_count))
+    for batch_start in range(0, len(transactions), batch_size):
+        transaction_batch = transactions[batch_start:batch_start + batch_size]
+        bank_queries = [
+            name
+            for tx in transaction_batch
+            for name in ((tx.payer or "").lower(), (tx.payee or "").lower())
+        ]
+        erp_queries = [(tx.payee or "").lower() for tx in transaction_batch]
+        bank_name_scores = (
+            process.cdist(
+                bank_queries,
+                bank_names,
+                scorer=fuzz.token_sort_ratio,
+                dtype=np.float64,
+                workers=-1,
             )
-            db.add(anomaly)
-            anomaly_count += 1
-        else:
-            seen_amounts[amount_key] = tx.transaction_id
-
-        # 1. Try matching against Bank Records
-        for bank in bank_records:
-            if bank.bank_statement_id in matched_bank_ids:
-                continue
-
-            bank_usd_amount = convert_to_usd(bank.amount, bank.currency, db)
-            amount_delta = abs(tx_usd_amount - bank_usd_amount)
-
-            # String similarity on counterparty & payer/payee
-            name_score_1 = fuzz.token_sort_ratio(tx.payer.lower(), bank.counterparty.lower())
-            name_score_2 = fuzz.token_sort_ratio(tx.payee.lower(), bank.counterparty.lower())
-            name_score = max(name_score_1, name_score_2)
-
-            # Reference ID match boost
-            ref_boost = 0.0
-            if tx.reference_id and bank.reference_number and tx.reference_id.strip() == bank.reference_number.strip():
-                ref_boost = 40.0
-
-            # Calculate composite confidence score (0 to 100)
-            amount_score = max(0.0, 100.0 - (amount_delta / (tx_usd_amount + 1e-5)) * 100.0)
-            confidence = (name_score * 0.4) + (amount_score * 0.4) + ref_boost
-
-            if confidence > best_confidence:
-                best_confidence = min(100.0, round(confidence, 2))
-                best_match = bank
-                match_type = "BANK"
-                ledger_id = bank.bank_statement_id
-                amount_diff = round(amount_delta, 2)
-
-        # 2. Try matching against ERP Records if no high bank match
-        if best_confidence < 85.0:
-            for erp in erp_records:
-                if erp.erp_id in matched_erp_ids:
-                    continue
-
-                erp_usd_amount = convert_to_usd(erp.expected_amount, erp.currency, db)
-                amount_delta = abs(tx_usd_amount - erp_usd_amount)
-
-                name_score = fuzz.token_sort_ratio(tx.payee.lower(), erp.customer_vendor_name.lower())
-                ref_boost = 40.0 if (tx.reference_id and erp.invoice_number and tx.reference_id.strip() == erp.invoice_number.strip()) else 0.0
-                amount_score = max(0.0, 100.0 - (amount_delta / (tx_usd_amount + 1e-5)) * 100.0)
-
-                confidence = (name_score * 0.4) + (amount_score * 0.4) + ref_boost
-
-                if confidence > best_confidence:
-                    best_confidence = min(100.0, round(confidence, 2))
-                    best_match = erp
-                    match_type = "ERP"
-                    ledger_id = erp.erp_id
-                    amount_diff = round(amount_delta, 2)
-
-        # Determine Tier & Status
-        if best_confidence >= 90.0:
-            tier = "high"
-            status = "matched"
-            remarks = f"Automated AI High-Confidence Match against {match_type} ledger record '{ledger_id}'."
-            matched_count += 1
-            if match_type == "BANK":
-                matched_bank_ids.add(ledger_id)
-            elif match_type == "ERP":
-                matched_erp_ids.add(ledger_id)
-        elif best_confidence >= 70.0:
-            tier = "medium"
-            status = "partial"
-            remarks = f"Partial Match against {match_type} ledger record '{ledger_id}'. Slight amount difference of {amount_diff} USD or name variance."
-            
-            # Record amount mismatch anomaly
-            anomaly = Anomaly(
-                transaction_id=tx.transaction_id,
-                anomaly_type="amount_mismatch",
-                severity="medium",
-                risk_score=0.55,
-                explanation=f"Amount difference of ${amount_diff} USD between Mojaloop transaction ({tx.currency} {tx.amount}) and ledger record '{ledger_id}'."
-            )
-            db.add(anomaly)
-            anomaly_count += 1
-        else:
-            tier = "low"
-            status = "unmatched"
-            remarks = "No matching bank statement or ERP invoice record found within acceptable confidence threshold."
-            
-            anomaly = Anomaly(
-                transaction_id=tx.transaction_id,
-                anomaly_type="missing_settlement",
-                severity="high",
-                risk_score=0.88,
-                explanation=f"Mojaloop transfer of {tx.currency} {tx.amount} has no matching settlement record in central bank or ERP ledgers."
-            )
-            db.add(anomaly)
-            anomaly_count += 1
-
-        rec = Reconciliation(
-            transaction_id=tx.transaction_id,
-            ledger_id=ledger_id,
-            ledger_type=match_type or "BANK",
-            status=status,
-            amount_difference=amount_diff,
-            match_confidence=best_confidence,
-            confidence_tier=tier,
-            remarks=remarks
+            if bank_records else None
         )
-        db.add(rec)
-        reconciled_count += 1
+        erp_name_scores = (
+            process.cdist(
+                erp_queries,
+                erp_names,
+                scorer=fuzz.token_sort_ratio,
+                dtype=np.float64,
+                workers=-1,
+            )
+            if erp_records else None
+        )
+
+        for batch_index, tx in enumerate(transaction_batch):
+            tx_usd_amount = convert_to_usd(tx.amount, tx.currency, db)
+            best_match = None
+            best_confidence = 0.0
+            match_type = None
+            ledger_id = None
+            best_record_index = None
+            amount_diff = 0.0
+
+            # Check duplicate charge anomaly
+            amount_key = (tx.payer, tx.amount, tx.currency)
+            if amount_key in seen_amounts:
+                prev_tx_id = seen_amounts[amount_key]
+                anomaly = Anomaly(
+                    transaction_id=tx.transaction_id,
+                    anomaly_type="duplicate_charge",
+                    severity="high",
+                    risk_score=0.92,
+                    explanation=f"Potential duplicate charge detected. Identical amount {tx.currency} {tx.amount} and payer '{tx.payer}' matches previous transaction '{prev_tx_id}'."
+                )
+                db.add(anomaly)
+                anomaly_count += 1
+            else:
+                seen_amounts[amount_key] = tx.transaction_id
+
+            # 1. Try matching against Bank Records
+            if bank_records:
+                tx_bank_name_scores = np.maximum(
+                    bank_name_scores[batch_index * 2],
+                    bank_name_scores[batch_index * 2 + 1],
+                )
+                amount_deltas = np.abs(tx_usd_amount - bank_usd_amounts)
+                amount_scores = np.maximum(
+                    0.0,
+                    100.0 - (amount_deltas / (tx_usd_amount + 1e-5)) * 100.0,
+                )
+                reference_boosts = np.zeros(len(bank_records), dtype=np.float64)
+                tx_reference = (tx.reference_id or "").strip()
+                if tx_reference in bank_references:
+                    reference_boosts[bank_references[tx_reference]] = 40.0
+                confidences = tx_bank_name_scores * 0.4 + amount_scores * 0.4 + reference_boosts
+                available_confidences = np.where(available_banks, confidences, -np.inf)
+                bank_index = int(np.argmax(available_confidences))
+                bank_confidence = float(available_confidences[bank_index])
+                if bank_confidence > best_confidence:
+                    best_confidence = bank_confidence
+                    best_match = bank_records[bank_index]
+                    match_type = "BANK"
+                    ledger_id = best_match.bank_statement_id
+                    best_record_index = bank_index
+                    amount_diff = round(float(amount_deltas[bank_index]), 2)
+                best_confidence = round(best_confidence, 2)
+
+            # 2. Try matching against ERP Records if no high bank match
+            if best_confidence < 85.0 and erp_records:
+                erp_amount_deltas = np.abs(tx_usd_amount - erp_usd_amounts)
+                erp_amount_scores = np.maximum(
+                    0.0,
+                    100.0 - (erp_amount_deltas / (tx_usd_amount + 1e-5)) * 100.0,
+                )
+                tx_erp_name_scores = erp_name_scores[batch_index]
+                erp_reference_boosts = np.zeros(len(erp_records), dtype=np.float64)
+                tx_reference = (tx.reference_id or "").strip()
+                if tx_reference in erp_references:
+                    erp_reference_boosts[erp_references[tx_reference]] = 40.0
+                erp_confidences = tx_erp_name_scores * 0.4 + erp_amount_scores * 0.4 + erp_reference_boosts
+                available_confidences = np.where(available_erp_records, erp_confidences, -np.inf)
+                erp_index = int(np.argmax(available_confidences))
+                erp_confidence = float(available_confidences[erp_index])
+                if erp_confidence > best_confidence:
+                    best_confidence = erp_confidence
+                    best_match = erp_records[erp_index]
+                    match_type = "ERP"
+                    ledger_id = best_match.erp_id
+                    best_record_index = erp_index
+                    amount_diff = round(float(erp_amount_deltas[erp_index]), 2)
+
+            best_confidence = round(best_confidence, 2)
+
+            # Determine Tier & Status
+            if best_confidence >= 90.0:
+                tier = "high"
+                status = "matched"
+                remarks = f"Automated AI High-Confidence Match against {match_type} ledger record '{ledger_id}'."
+                matched_count += 1
+                if match_type == "BANK":
+                    available_banks[best_record_index] = False
+                elif match_type == "ERP":
+                    available_erp_records[best_record_index] = False
+            elif best_confidence >= 70.0:
+                tier = "medium"
+                status = "partial"
+                remarks = f"Partial Match against {match_type} ledger record '{ledger_id}'. Slight amount difference of {amount_diff} USD or name variance."
+            
+                # Record amount mismatch anomaly
+                anomaly = Anomaly(
+                    transaction_id=tx.transaction_id,
+                    anomaly_type="amount_mismatch",
+                    severity="medium",
+                    risk_score=0.55,
+                    explanation=f"Amount difference of ${amount_diff} USD between Mojaloop transaction ({tx.currency} {tx.amount}) and ledger record '{ledger_id}'."
+                )
+                db.add(anomaly)
+                anomaly_count += 1
+            else:
+                tier = "low"
+                status = "unmatched"
+                remarks = "No matching bank statement or ERP invoice record found within acceptable confidence threshold."
+            
+                anomaly = Anomaly(
+                    transaction_id=tx.transaction_id,
+                    anomaly_type="missing_settlement",
+                    severity="high",
+                    risk_score=0.88,
+                    explanation=f"Mojaloop transfer of {tx.currency} {tx.amount} has no matching settlement record in central bank or ERP ledgers."
+                )
+                db.add(anomaly)
+                anomaly_count += 1
+
+            rec = Reconciliation(
+                transaction_id=tx.transaction_id,
+                ledger_id=ledger_id,
+                ledger_type=match_type or "BANK",
+                status=status,
+                amount_difference=amount_diff,
+                match_confidence=best_confidence,
+                confidence_tier=tier,
+                remarks=remarks
+            )
+            db.add(rec)
+            reconciled_count += 1
 
     db.commit()
 

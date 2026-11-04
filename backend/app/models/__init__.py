@@ -1,6 +1,12 @@
 from app.models.transaction import Transaction
 from app.models.bank_transaction import BankTransaction, ERPRecord
-from app.models.reconciliation import Reconciliation, Anomaly, CashFlowForecast, FXRate
+from app.models.reconciliation import (
+    Reconciliation,
+    Anomaly,
+    CashFlowForecast,
+    FXRate,
+    AutomatedReconciliationRun,
+)
 
 __all__ = [
     "Transaction",
@@ -10,4 +16,5 @@ __all__ = [
     "Anomaly",
     "CashFlowForecast",
     "FXRate",
+    "AutomatedReconciliationRun",
 ]

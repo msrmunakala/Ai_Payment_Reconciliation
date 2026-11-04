@@ -52,3 +52,17 @@ class FXRate(Base):
     to_currency = Column(String, nullable=False, index=True)
     rate = Column(Float, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AutomatedReconciliationRun(Base):
+    __tablename__ = "automated_reconciliation_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trigger = Column(String, nullable=False, default="scheduled")
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    status = Column(String, nullable=False, default="running")
+    total_reconciled = Column(Integer, nullable=False, default=0)
+    matched_count = Column(Integer, nullable=False, default=0)
+    anomalies_detected = Column(Integer, nullable=False, default=0)
+    message = Column(Text, nullable=True)

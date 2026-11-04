@@ -1,17 +1,18 @@
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./reconciliation.db")
+# uvicorn does not load .env by itself. The file lives at the project root.
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
-# SQLite requires connect_args for multithreading
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set. Add it to the project .env file.")
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args=connect_args,
-    echo=False
-)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

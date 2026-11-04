@@ -1,9 +1,11 @@
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database.db import get_db
 from app.models.reconciliation import Reconciliation, Anomaly
+from app.models.transaction import Transaction
 from app.schemas.reconciliation_schema import ReconciliationResultResponse, AnomalyResponse, ManualMatchRequest
 from app.services.reconciliation_service import run_reconciliation
 
@@ -14,17 +16,28 @@ router = APIRouter(
 
 
 @router.post("/run")
-def trigger_reconciliation(db: Session = Depends(get_db)):
-    return run_reconciliation(db)
+def trigger_reconciliation(
+    target_date: Optional[date] = Query(None, alias="date"),
+    db: Session = Depends(get_db),
+):
+    return run_reconciliation(db, target_date)
 
 
 @router.get("/results", response_model=List[ReconciliationResultResponse])
 def get_reconciliation_results(
     status: Optional[str] = Query(None, description="Filter by status: matched, partial, unmatched"),
     tier: Optional[str] = Query(None, description="Filter by confidence tier: high, medium, low"),
+    target_date: Optional[date] = Query(None, alias="date"),
     db: Session = Depends(get_db)
 ):
     query = db.query(Reconciliation)
+    if target_date:
+        start = datetime.combine(target_date, datetime.min.time())
+        end = start + timedelta(days=1)
+        query = query.join(
+            Transaction,
+            Reconciliation.transaction_id == Transaction.transaction_id,
+        ).filter(Transaction.created_at >= start, Transaction.created_at < end)
     if status:
         query = query.filter(Reconciliation.status == status)
     if tier:

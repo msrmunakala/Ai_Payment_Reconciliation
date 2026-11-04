@@ -13,6 +13,7 @@ export default defineConfig({
       '/reconciliation': backend,
       '/transactions': backend,
       '/forecast': backend,
+      '/treasury': backend,
       '/anomalies': backend,
       '/demo': backend,
       '/reports': backend,

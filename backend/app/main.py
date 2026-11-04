@@ -2,6 +2,7 @@ import csv
 import io
 import os
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -22,6 +23,8 @@ from app.api.transactions import router as transactions_router
 from app.api.reconciliation import router as reconciliation_router
 from app.api.dashboard import router as dashboard_router
 from app.api.forecast import router as forecast_router
+from app.api.treasury import router as treasury_router
+from app.services.scheduler import start as start_scheduler, shutdown as shutdown_scheduler
 
 API_KEY = os.getenv("API_KEY", "review2-demo-key")
 
@@ -71,7 +74,11 @@ async def lifespan(app: FastAPI):
             seed_demo_data(db)
     finally:
         db.close()
-    yield
+    start_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_scheduler()
 
 
 app = FastAPI(
@@ -105,6 +112,7 @@ app.include_router(transactions_router)
 app.include_router(reconciliation_router)
 app.include_router(dashboard_router)
 app.include_router(forecast_router)
+app.include_router(treasury_router)
 
 
 @app.post("/auth/login")
@@ -280,9 +288,20 @@ def seed_demo_data(db: Session, count: int = 150):
 
 
 @app.get("/anomalies", dependencies=[Depends(require_api_key)])
-def get_anomalies(db: Session = Depends(get_db)):
+def get_anomalies(
+    target_date: Optional[date] = Query(None, alias="date"),
+    db: Session = Depends(get_db),
+):
     order = {"high": 0, "medium": 1, "low": 2}
-    rows = db.query(Anomaly).all()
+    query = db.query(Anomaly)
+    if target_date:
+        start = datetime.combine(target_date, datetime.min.time())
+        end = start + timedelta(days=1)
+        query = query.join(
+            Transaction,
+            Anomaly.transaction_id == Transaction.transaction_id,
+        ).filter(Transaction.created_at >= start, Transaction.created_at < end)
+    rows = query.all()
     return sorted(
         [
             {
