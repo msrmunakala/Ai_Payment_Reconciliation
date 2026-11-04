@@ -1,9 +1,27 @@
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-reconciliation}
+      POSTGRES_USER: ${POSTGRES_USER:-recon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-recon} -d ${POSTGRES_DB:-reconciliation}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build: ./backend
-    ports:
-      - "8000:8000"
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-recon}:${POSTGRES_PASSWORD:-change-me-in-production}@db:5432/${POSTGRES_DB:-reconciliation}
       API_KEY: ${API_KEY:-review2-demo-key}
       ANALYST_USERNAME: ${ANALYST_USERNAME:-analyst}
       ANALYST_PASSWORD: ${ANALYST_PASSWORD:-recon-secure}
@@ -12,10 +30,21 @@ services:
       # BANK_SETTLEMENT_BASE_URL: ${BANK_SETTLEMENT_BASE_URL:-}
       # BANK_SETTLEMENT_API_KEY: ${BANK_SETTLEMENT_API_KEY:-}
       # CENTRAL_BANK_RTGS_API_KEY: ${CENTRAL_BANK_RTGS_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     ports:
-      - "8080:80"
+      - "${APP_PORT:-8080}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
