@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -8,6 +9,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database.db import Base, engine, get_db
@@ -22,8 +25,14 @@ from app.api.transactions import router as transactions_router
 from app.api.reconciliation import router as reconciliation_router
 from app.api.dashboard import router as dashboard_router
 from app.api.forecast import router as forecast_router
+from app.core.config import settings
 
-API_KEY = os.getenv("API_KEY", "review2-demo-key")
+logger = logging.getLogger(__name__)
+
+for warning in settings.validate():
+    logger.warning("Configuration warning: %s", warning)
+
+API_KEY = settings.security.api_key
 
 # ---------------------------------------------------------------------------
 # Live switch / settlement adapters are not connected in this demo.
@@ -40,8 +49,8 @@ API_KEY = os.getenv("API_KEY", "review2-demo-key")
 # CENTRAL_BANK_RTGS_API_KEY = os.getenv("CENTRAL_BANK_RTGS_API_KEY")
 # ---------------------------------------------------------------------------
 
-ANALYST_USERNAME = os.getenv("ANALYST_USERNAME", "analyst")
-ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "recon-secure")
+ANALYST_USERNAME = settings.security.analyst_username
+ANALYST_PASSWORD = settings.security.analyst_password
 ANALYST_ROLE = "analysis_security"
 
 
@@ -67,7 +76,7 @@ async def lifespan(app: FastAPI):
     init_db()
     db = next(get_db())
     try:
-        if not db.query(Transaction).first():
+        if settings.seed_on_startup and not db.query(Transaction).first():
             seed_demo_data(db)
     finally:
         db.close()
@@ -83,8 +92,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.security.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -93,7 +101,7 @@ app.add_middleware(
 @app.middleware("http")
 async def protect_financial_endpoints(request: Request, call_next):
     """Keep health checks and API documentation public, but protect all financial data routes."""
-    public_paths = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/auth/login"}
+    public_paths = {"/", "/health", "/ready", "/docs", "/openapi.json", "/redoc", "/auth/login"}
     if request.method != "OPTIONS" and request.url.path not in public_paths:
         if request.headers.get("X-API-Key") != API_KEY:
             return JSONResponse(status_code=401, content={"detail": "A valid X-API-Key is required."})
@@ -137,6 +145,17 @@ def home():
 @app.get("/health")
 def health():
     return {"status": "healthy", "engine": "running"}
+
+
+@app.get("/ready")
+def readiness():
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        logger.exception("Readiness check failed while querying the database")
+        return JSONResponse(status_code=503, content={"status": "not_ready"})
+    return {"status": "ready", "database": "connected"}
 
 
 @app.post("/demo/reset", dependencies=[Depends(require_api_key)])
@@ -334,4 +353,3 @@ def export_report(status: Optional[str] = None, db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=reconciliation-report.csv"}
     )
-

@@ -241,6 +241,8 @@ class ForecastSettings:
 @dataclass(frozen=True)
 class SecuritySettings:
     api_key: str = _env_str("API_KEY", DEMO_API_KEY)
+    analyst_username: str = _env_str("ANALYST_USERNAME", "analyst")
+    analyst_password: str = _env_str("ANALYST_PASSWORD", "recon-secure")
     cors_origins: List[str] = field(
         default_factory=lambda: _env_list(
             "CORS_ORIGINS", ["http://localhost:5173", "http://127.0.0.1:5173"]
@@ -317,7 +319,17 @@ class Settings:
                 "API_KEY is the built-in demo key; set API_KEY before exposing this service."
             )
 
+        if self.is_production and self.security.analyst_password == "recon-secure":
+            raise RuntimeError(
+                "ANALYST_PASSWORD is still set to the publicly known demo password. "
+                "Set a strong ANALYST_PASSWORD before running in production."
+            )
+
         if "*" in self.security.cors_origins:
+            if self.is_production:
+                raise RuntimeError(
+                    "CORS_ORIGINS must list the frontend origin explicitly in production."
+                )
             warnings.append(
                 "CORS_ORIGINS contains '*'; credentialed cross-origin requests will be rejected "
                 "by browsers. List explicit origins instead."

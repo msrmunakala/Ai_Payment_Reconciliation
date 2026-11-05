@@ -1,4 +1,4 @@
-# Render Blueprint – AI Payment Reconciliation Backend
+# Render Blueprint – AI Payment Reconciliation
 # https://docs.render.com/infrastructure-as-code
 
 services:
@@ -9,19 +9,34 @@ services:
     dockerContext: ./backend
     region: singapore  # closest to Neon ap-southeast-1
     plan: free
-    healthCheckPath: /health
+    healthCheckPath: /ready
     envVars:
       - key: DATABASE_URL
-        sync: false  # Set manually in Render dashboard
+        sync: false  # Set manually in Render dashboard; use the rotated Neon pooled URL
       - key: API_KEY
-        generateValue: true  # Render generates a secure random value
+        generateValue: true
+      - key: ANALYST_USERNAME
+        value: analyst
+      - key: ANALYST_PASSWORD
+        sync: false  # Set a strong sign-in password in Render
       - key: ENVIRONMENT
         value: production
       - key: CORS_ORIGINS
-        sync: false  # Set to your frontend URL after deployment
+        sync: false  # Set to the frontend's https://...onrender.com origin
       - key: SEED_ON_STARTUP
-        value: "true"
+        value: "false"
       - key: MOJALOOP_ENABLED
         value: "false"
-      - key: PYTHON_VERSION
-        value: "3.12"
+      - key: SCHEDULER_ENABLED
+        value: "false"
+
+  - type: web
+    name: ai-recon-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    plan: free
+    envVars:
+      - key: VITE_API_URL
+        sync: false  # Set to the backend's https://...onrender.com URL before building

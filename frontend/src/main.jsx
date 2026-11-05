@@ -89,7 +89,7 @@ function Login({ onLogin }) {
         <button className="btn btn-primary" type="submit" disabled={busy} style={{ marginTop: 18, width: '100%', justifyContent: 'center' }}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
-        <p className="login-hint">Demo analyst: analyst / recon-secure. Live Mojaloop and bank settlement APIs are not connected; use Add files.</p>
+        <p className="login-hint">Use the analyst credentials configured by your deployment administrator. Live Mojaloop and bank settlement APIs are not connected; use Add files.</p>
       </form>
     </div>
   );

@@ -83,6 +83,32 @@ npm run dev
 
 Open the Vite URL (default `http://localhost:5173`).
 
+## Deploy to Render
+
+The recommended setup is two Render services connected to the same Neon
+database: a **static site** for the Vite frontend and a **web service** for the
+FastAPI backend. Render serves the frontend through its CDN, while database
+credentials remain only in the backend environment. The root `render.yaml`
+defines both services.
+
+1. Rotate the Neon database password, then connect the GitHub repository to
+   Render and create a Blueprint from the `Production` branch.
+2. Set the backend's `DATABASE_URL` to Neon's **pooled** connection string,
+   `ANALYST_PASSWORD` to a new strong sign-in password, and `CORS_ORIGINS` to
+   the exact frontend origin (for example, `https://ai-recon-frontend.onrender.com`,
+   with no trailing slash).
+3. After Render creates the backend, set the frontend's `VITE_API_URL` build
+   variable to the backend service URL (for example,
+   `https://ai-recon-backend.onrender.com`), then redeploy the frontend.
+4. Verify the backend's `/health` endpoint and sign in through the frontend.
+
+Do not set `VITE_API_KEY` or put `DATABASE_URL` in the frontend: Vite embeds
+build-time variables in public browser assets. The analyst password is provided
+at sign-in; the backend returns its API key only after successful login.
+Synthetic seed data is disabled in the Render Blueprint. Free Render web
+services can sleep while idle; choose a paid backend plan if the API needs to
+remain continuously warm.
+
 ## How the Mojaloop integration actually works
 
 This matters, because two plausible-sounding designs are not possible against the real APIs.
@@ -122,7 +148,10 @@ Everything is environment-driven via `backend/.env`; see `backend/.env.example` 
 | --- | --- | --- |
 | `DATABASE_URL` | — | `postgresql+psycopg://…`. SQLite still works and is what the unit tests use. |
 | `API_KEY` | `review2-demo-key` | Shared API key. The app refuses to start in production while this is the default. |
+| `ANALYST_USERNAME` | `analyst` | Username accepted by the login endpoint. |
+| `ANALYST_PASSWORD` | `recon-secure` | Local demo password; production refuses to start with this default. |
 | `CORS_ORIGINS` | localhost:5173 | Comma-separated allow-list. |
+| `SEED_ON_STARTUP` | `true` | Add synthetic sample data to an empty database at startup; disabled in the Render Blueprint. |
 | `WEBHOOK_SECRET` | *(unset)* | Enables HMAC-SHA256 webhook verification. **Leave unset while the toolkit drives the backend** — the toolkit does not sign its callbacks. |
 | `MOJALOOP_ENABLED` | `false` | Turn on settlement-window pulling and transfer verification. |
 | `MOJALOOP_BASE_URL` | `http://localhost:4040` | Transfer API base. |
@@ -538,13 +567,13 @@ Both are additive, read-only, and were needed to satisfy the design rather than 
 
 ### What was preserved
 
-Every capability the old dashboard had still works: run reconciliation, view results, review exceptions, see the forecast, export CSV and JSON, view the generator script source, and regenerate the demo dataset. Authentication is unchanged (`X-API-Key`, `VITE_API_KEY`/`VITE_API_URL`). Nothing in the Mojaloop integration, the database models or the reconciliation engine was touched.
+Every capability the old dashboard had still works: run reconciliation, view results, review exceptions, see the forecast, export CSV and JSON, view the generator script source, and regenerate the demo dataset. The login screen exchanges the configured analyst username and password for the backend's shared `X-API-Key`; `VITE_API_URL` selects the backend. Nothing in the Mojaloop integration, the database models or the reconciliation engine was touched.
 
 Added on top: per-ledger browsing of bank and ERP records, server-side filtering on every table, pagination, settlement-window drill-through, manual-override withdrawal, FX rate editing with history, scheduler control, and the run audit trail.
 
 ### Still hardcoded
 
-- The **user identity** in the top bar ("Treasury Ops / Analyst") is a placeholder. The backend has no user model — authentication is a single shared API key — so there is no identity to display. Real users require authentication work on the backend first.
+- The **user identity** in the top bar ("Treasury Ops / Analyst") is a placeholder. The backend has no user model; the configured analyst login currently shares one API key. Per-user identity and permissions require additional authentication work.
 - The **"Regenerate demo dataset" parameters** (600 transactions, 30 days, seed 42) are fixed in the Settings page rather than being form inputs.
 - **Sidebar section names** are static, as they describe fixed application areas.
 
