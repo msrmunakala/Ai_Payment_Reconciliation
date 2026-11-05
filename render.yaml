@@ -31,7 +31,7 @@ services:
         value: "false"
 
   - type: web
-    name: ai-recon-frontend
+    name: ai-payment-reconciliation
     runtime: static
     rootDir: frontend
     buildCommand: npm ci && npm run build
