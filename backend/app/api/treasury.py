@@ -9,7 +9,8 @@ from app.database.db import get_db
 from app.models.bank_transaction import BankTransaction
 from app.models.reconciliation import AutomatedReconciliationRun
 from app.models.transaction import Transaction
-from app.services.forecasting import forecast_cash_positions, weekly_cash_positions
+from app.services.fx_service import convert_to_inr
+from app.services.forecasting import forecast_cash_flows, weekly_cash_positions
 from app.services.scheduler import (
     configure_daily_job,
     configure_interval_job,
@@ -37,6 +38,7 @@ def get_cash_position_forecast(
     settlements = db.query(
         BankTransaction.value_date.label("settlement_date"),
         BankTransaction.amount,
+        BankTransaction.currency,
         BankTransaction.transaction_type,
     ).filter(BankTransaction.value_date.isnot(None)).all()
 
@@ -45,9 +47,12 @@ def get_cash_position_forecast(
             [
                 {
                     "settlement_date": row.settlement_date,
-                    "amount": -abs(float(row.amount))
+                    "inflow": convert_to_inr(row.amount, row.currency)
+                    if (row.transaction_type or "").upper() != "DEBIT"
+                    else 0.0,
+                    "outflow": convert_to_inr(row.amount, row.currency)
                     if (row.transaction_type or "").upper() == "DEBIT"
-                    else abs(float(row.amount)),
+                    else 0.0,
                 }
                 for row in settlements
             ]
@@ -56,12 +61,30 @@ def get_cash_position_forecast(
         transactions = db.query(
             Transaction.created_at.label("timestamp"),
             Transaction.amount,
+            Transaction.currency,
         ).filter(Transaction.created_at.isnot(None)).all()
         history = pd.DataFrame(
-            [{"timestamp": row.timestamp, "amount": row.amount} for row in transactions]
+            [
+                {
+                    "timestamp": row.timestamp,
+                    "inflow": convert_to_inr(row.amount, row.currency),
+                    "outflow": 0.0,
+                }
+                for row in transactions
+            ]
         )
 
-    forecast = forecast_cash_positions(history, periods)
+    if history.empty:
+        daily_history = pd.DataFrame(columns=["ds", "inflow", "outflow"])
+    else:
+        date_column = "settlement_date" if "settlement_date" in history else "timestamp"
+        history["ds"] = pd.to_datetime(history[date_column], errors="coerce", utc=True).dt.tz_convert(None).dt.normalize()
+        history = history.dropna(subset=["ds"])
+        daily_history = history.groupby("ds", as_index=False, sort=True)[
+            ["inflow", "outflow"]
+        ].sum()
+
+    forecast = forecast_cash_flows(daily_history, periods)
     if frequency == "weekly":
         forecast = weekly_cash_positions(forecast)
     return {
@@ -75,6 +98,8 @@ def get_cash_position_forecast(
                 "yhat": float(row.yhat),
                 "yhat_lower": float(row.yhat_lower),
                 "yhat_upper": float(row.yhat_upper),
+                "inflow": float(row.inflow),
+                "outflow": float(row.outflow),
             }
             for row in forecast.itertuples(index=False)
         ],

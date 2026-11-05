@@ -5,6 +5,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1])); os.environ["DATABAS
 from app.database.db import Base,SessionLocal,engine
 from app.models.reconciliation import Anomaly, Reconciliation
 from app.services.reconciliation_service import _find_unusual_amounts, _score_unique_names, seed_demo_data
+from app.services.fx_service import convert_to_inr
 from rapidfuzz import fuzz, process
 class ReconciliationTests(unittest.TestCase):
     @classmethod
@@ -29,6 +30,9 @@ class ReconciliationTests(unittest.TestCase):
             self.assertEqual(
                 scores[query_indices[query]].tolist(), expected[index].tolist()
             )
+    def test_forecast_currency_conversion_targets_inr(self):
+        self.assertEqual(convert_to_inr(1, "USD"), 83.5)
+        self.assertEqual(convert_to_inr(83.5, "INR"), 83.5)
     def test_unusual_amount_detection_is_currency_scoped_and_conservative(self):
         transactions = [
             SimpleNamespace(

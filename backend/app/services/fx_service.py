@@ -33,3 +33,7 @@ def convert_to_usd(amount: float, currency: str, db: Session = None) -> float:
     if rate:
         return amount / rate
     return amount
+
+
+def convert_to_inr(amount: float, currency: str, db: Session = None) -> float:
+    return convert_to_usd(amount, currency, db) * DEFAULT_RATES["INR"]

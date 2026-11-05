@@ -167,8 +167,8 @@ function Dashboard({ session, onLogout }) {
         predicted_amount: point.yhat,
         lower_bound: point.yhat_lower,
         upper_bound: point.yhat_upper,
-        inflow: Math.max(point.yhat, 0),
-        outflow: Math.max(-point.yhat, 0),
+        inflow: Math.max(point.inflow || 0, 0),
+        outflow: Math.max(point.outflow || 0, 0),
       })));
       setForecastFallback(Boolean(forecastData.used_fallback));
       setSchedulerStatus(schedulerData);
@@ -408,7 +408,7 @@ function Dashboard({ session, onLogout }) {
               <span>Next run: {schedulerStatus?.next_run_at ? new Date(schedulerStatus.next_run_at).toLocaleString() : '—'}</span>
               <span>Last run: {schedulerStatus?.last_run ? `${schedulerStatus.last_run.status} · ${schedulerStatus.last_run.total_reconciled} records` : 'No automated runs yet'}</span>
             </div>
-            {forecastFallback && <p className="forecast-note">Limited history or Prophet unavailable; displaying the fallback forecast.</p>}
+            {forecastFallback && <p className="forecast-note">Fewer than 14 days of history are available or Prophet could not run; displaying the robust baseline forecast.</p>}
             {forecastLoading ? (
               <div className="empty">Generating forecast…</div>
             ) : (
@@ -432,7 +432,9 @@ function Dashboard({ session, onLogout }) {
                 <thead>
                   <tr>
                     <th>{forecastFrequency === 'weekly' ? 'Week of' : 'Date'}</th>
-                    <th>Predicted cash position</th>
+                    <th>Forecast inflow</th>
+                    <th>Forecast outflow</th>
+                    <th>Projected net position</th>
                     <th>Lower bound</th>
                     <th>Upper bound</th>
                   </tr>
@@ -441,6 +443,8 @@ function Dashboard({ session, onLogout }) {
                   {forecast.map((p) => (
                     <tr key={p.date}>
                       <td className="mono">{p.date}</td>
+                      <td>{money(p.inflow)}</td>
+                      <td>{money(p.outflow)}</td>
                       <td>{money(p.predicted_amount)}</td>
                       <td>{money(p.lower_bound)}</td>
                       <td>{money(p.upper_bound)}</td>

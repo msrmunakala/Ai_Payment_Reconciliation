@@ -1,14 +1,17 @@
 """Prophet-based daily and weekly cash-position forecasts."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 FORECAST_COLUMNS = ["ds", "yhat", "yhat_lower", "yhat_upper"]
+MIN_PROPHET_HISTORY_DAYS = 14
+BASELINE_WEEKDAY_FACTORS = (0.95, 0.975, 1.0, 1.025, 1.05, 1.025, 0.97)
 
 
 def _records_to_frame(data: Any) -> pd.DataFrame:
@@ -62,37 +65,42 @@ def _daily_history(data: Any) -> pd.DataFrame:
     return clean.groupby("ds", as_index=False, sort=True)["y"].sum()
 
 
-def _dummy_history(history: pd.DataFrame) -> pd.DataFrame:
-    if not history.empty:
-        end_date = pd.Timestamp(history["ds"].max()).normalize()
-        baseline = float(history["y"].median())
-    else:
-        end_date = pd.Timestamp(datetime.utcnow().date() - timedelta(days=1))
-        baseline = 0.0
-
-    if not pd.notna(baseline):
-        baseline = 0.0
-    dates = pd.date_range(end=end_date, periods=30, freq="D")
-    # Small deterministic weekly shape keeps the fallback stable across requests.
-    values = [baseline * (1.0 + 0.05 * ((day.weekday() - 3) / 3)) for day in dates]
-    return pd.DataFrame({"ds": dates, "y": values})
-
-
 def _baseline_forecast(history: pd.DataFrame, periods: int) -> pd.DataFrame:
     if history.empty:
         level = 0.0
         spread = 1.0
         start_date = pd.Timestamp(datetime.utcnow().date())
+        weekday_levels = {}
     else:
-        values = history["y"].tail(30).astype(float)
-        level = float(values.mean())
-        spread = max(float(values.std(ddof=0)) if len(values) > 1 else 0.0, abs(level) * 0.1, 1.0)
+        recent_history = history.tail(30).copy()
+        values = recent_history["y"].astype(float)
+        level = float(values.median())
+        median_absolute_deviation = float(np.median(np.abs(values - level)))
+        spread = max(1.4826 * median_absolute_deviation, abs(level) * 0.1, 1.0)
         start_date = pd.Timestamp(history["ds"].max()).normalize() + pd.Timedelta(days=1)
+        weekday_history = recent_history.assign(
+            weekday=pd.to_datetime(recent_history["ds"]).dt.weekday
+        )
+        weekday_groups = weekday_history.groupby("weekday")["y"]
+        weekday_levels = {
+            weekday: float(group.median())
+            for weekday, group in weekday_groups
+            if len(group) >= 2
+        }
+        weekday_levels.update({
+            weekday: level * factor
+            for weekday, factor in enumerate(BASELINE_WEEKDAY_FACTORS)
+            if weekday not in weekday_levels
+        })
 
     future_dates = pd.date_range(start=start_date, periods=periods, freq="D")
-    forecast = pd.DataFrame({"ds": future_dates, "yhat": level})
-    forecast["yhat_lower"] = level - 1.96 * spread
-    forecast["yhat_upper"] = level + 1.96 * spread
+    forecast_values = [
+        float(weekday_levels.get(future_date.weekday(), level))
+        for future_date in future_dates
+    ]
+    forecast = pd.DataFrame({"ds": future_dates, "yhat": forecast_values})
+    forecast["yhat_lower"] = forecast["yhat"] - 1.96 * spread
+    forecast["yhat_upper"] = forecast["yhat"] + 1.96 * spread
     return forecast[FORECAST_COLUMNS]
 
 
@@ -105,30 +113,64 @@ def forecast_cash_positions(historical_data: Any, periods: int = 30) -> pd.DataF
         logger.exception("Could not normalize cash-position history; using fallback data")
         history = pd.DataFrame(columns=["ds", "y"])
 
-    used_fallback = len(history) < 3
-    training_data = _dummy_history(history) if used_fallback else history
+    if len(history) < MIN_PROPHET_HISTORY_DAYS:
+        forecast = _baseline_forecast(history, periods)
+        forecast.attrs["used_fallback"] = True
+        forecast.attrs["method"] = "baseline"
+        return forecast
 
     try:
         from prophet import Prophet
 
         model = Prophet(
             yearly_seasonality=False,
-            weekly_seasonality=len(training_data) >= 14,
+            weekly_seasonality=True,
             daily_seasonality=False,
             uncertainty_samples=100,
         )
-        model.fit(training_data[["ds", "y"]])
+        model.fit(history[["ds", "y"]])
         future = model.make_future_dataframe(periods=periods)
         forecast = model.predict(future).tail(periods)[FORECAST_COLUMNS].reset_index(drop=True)
-        forecast.attrs["used_fallback"] = used_fallback
+        forecast.attrs["used_fallback"] = False
         forecast.attrs["method"] = "prophet"
         return forecast
     except Exception:
         logger.exception("Prophet forecast failed; returning a baseline forecast")
-        forecast = _baseline_forecast(training_data if used_fallback else history, periods)
+        forecast = _baseline_forecast(history, periods)
         forecast.attrs["used_fallback"] = True
         forecast.attrs["method"] = "baseline"
         return forecast
+
+
+def forecast_cash_flows(daily_flows: pd.DataFrame, periods: int = 30) -> pd.DataFrame:
+    """Forecast gross inflow and outflow separately, then derive net position."""
+    if daily_flows.empty:
+        daily_flows = pd.DataFrame(columns=["ds", "inflow", "outflow"])
+
+    inflow_history = daily_flows[["ds", "inflow"]].rename(columns={"inflow": "y"})
+    outflow_history = daily_flows[["ds", "outflow"]].rename(columns={"outflow": "y"})
+    inflow_forecast = forecast_cash_positions(inflow_history, periods)
+    outflow_forecast = forecast_cash_positions(outflow_history, periods)
+
+    forecast = pd.DataFrame({
+        "ds": inflow_forecast["ds"],
+        "yhat": inflow_forecast["yhat"] - outflow_forecast["yhat"],
+        "yhat_lower": inflow_forecast["yhat_lower"] - outflow_forecast["yhat_upper"],
+        "yhat_upper": inflow_forecast["yhat_upper"] - outflow_forecast["yhat_lower"],
+        "inflow": inflow_forecast["yhat"].clip(lower=0),
+        "outflow": outflow_forecast["yhat"].clip(lower=0),
+    })
+    forecast.attrs["used_fallback"] = (
+        inflow_forecast.attrs.get("used_fallback", False)
+        or outflow_forecast.attrs.get("used_fallback", False)
+    )
+    forecast.attrs["method"] = (
+        "prophet"
+        if inflow_forecast.attrs.get("method") == "prophet"
+        and outflow_forecast.attrs.get("method") == "prophet"
+        else "baseline"
+    )
+    return forecast
 
 
 def weekly_cash_positions(daily_forecast: pd.DataFrame) -> pd.DataFrame:
@@ -139,8 +181,13 @@ def weekly_cash_positions(daily_forecast: pd.DataFrame) -> pd.DataFrame:
     frame["ds"] = pd.to_datetime(frame["ds"], errors="coerce")
     frame = frame.dropna(subset=["ds"])
     frame["week_start"] = frame["ds"].dt.to_period("W-SUN").dt.start_time
-    weekly = frame.groupby("week_start", as_index=False)[
-        ["yhat", "yhat_lower", "yhat_upper"]
-    ].sum().rename(columns={"week_start": "ds"})
+    sum_columns = [
+        column
+        for column in ("yhat", "yhat_lower", "yhat_upper", "inflow", "outflow")
+        if column in frame.columns
+    ]
+    weekly = frame.groupby("week_start", as_index=False)[sum_columns].sum().rename(
+        columns={"week_start": "ds"}
+    )
     weekly.attrs.update(daily_forecast.attrs)
-    return weekly[FORECAST_COLUMNS]
+    return weekly
