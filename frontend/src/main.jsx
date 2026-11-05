@@ -50,6 +50,11 @@ function statusLabel(status) {
   return (status || '').replaceAll('_', ' ');
 }
 
+function anomalyLabel(type) {
+  if (type === 'unusual_amount') return 'Unusual amount anomaly';
+  return (type || '').replaceAll('_', ' ');
+}
+
 function Login({ onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -343,7 +348,7 @@ function Dashboard({ session, onLogout }) {
               </div>
               <span className="muted">{filtered.length} shown</span>
             </div>
-            <ResultTable rows={filtered} onSelect={setSelected} />
+            <ResultTable rows={filtered} anomalies={anomalies} onSelect={setSelected} />
           </section>
         )}
 
@@ -360,6 +365,7 @@ function Dashboard({ session, onLogout }) {
                 <div className="exception" key={item.transaction_id + item.type}>
                   <span className={`pill ${item.severity === 'high' ? 'unmatched' : 'partial'}`}>{item.severity}</span>
                   <div>
+                    <div className="pill partial">{anomalyLabel(item.type)}</div>
                     <div className="mono">{item.transaction_id}</div>
                     <div style={{ color: 'var(--text-2)', marginTop: 2 }}>{item.explanation}</div>
                   </div>
@@ -470,8 +476,13 @@ function Dashboard({ session, onLogout }) {
   );
 }
 
-function ResultTable({ rows, onSelect }) {
+function ResultTable({ rows, anomalies, onSelect }) {
   if (!rows.length) return <div className="empty">No records in this view.</div>;
+  const unusualTransactionIds = new Set(
+    anomalies
+      .filter((anomaly) => anomaly.type === 'unusual_amount')
+      .map((anomaly) => anomaly.transaction_id)
+  );
   return (
     <div className="table-wrap">
       <table>
@@ -492,7 +503,12 @@ function ResultTable({ rows, onSelect }) {
             return (
               <tr key={row.transaction_id} onClick={() => onSelect(row)}>
                 <td className="mono">{row.transaction_id}</td>
-                <td><span className={`pill ${kind}`}>{statusLabel(row.status)}</span></td>
+                <td>
+                  <span className={`pill ${kind}`}>{statusLabel(row.status)}</span>
+                  {unusualTransactionIds.has(row.transaction_id) && (
+                    <span className="pill partial">Unusual amount anomaly</span>
+                  )}
+                </td>
                 <td>
                   <div className="score">
                     <div className="score-track"><div className={`score-fill ${band}`} style={{ width: `${conf}%` }} /></div>

@@ -3,6 +3,7 @@ import uuid
 from datetime import date, datetime, timedelta
 import numpy as np
 from rapidfuzz import fuzz, process
+from sklearn.ensemble import IsolationForest
 from sqlalchemy.orm import Session
 
 from app.models.transaction import Transaction
@@ -23,6 +24,74 @@ def _score_unique_names(queries, choices):
     )
     query_indices = {query: index for index, query in enumerate(unique_queries)}
     return scores, query_indices
+
+
+def _find_unusual_amounts(transactions):
+    transactions_by_currency = {}
+    for tx in transactions:
+        currency = (tx.currency or "USD").upper()
+        transactions_by_currency.setdefault(currency, []).append(tx)
+
+    eligible_transactions = [
+        tx
+        for currency_transactions in transactions_by_currency.values()
+        if len(currency_transactions) >= 20
+        for tx in currency_transactions
+    ]
+    if len(eligible_transactions) < 20:
+        return {}
+
+    payer_counts = {}
+    payee_counts = {}
+    for tx in eligible_transactions:
+        currency = (tx.currency or "USD").upper()
+        payer = (tx.payer or "").strip().casefold()
+        payee = (tx.payee or "").strip().casefold()
+        payer_key = (currency, payer)
+        payee_key = (currency, payee)
+        payer_counts[payer_key] = payer_counts.get(payer_key, 0) + 1
+        payee_counts[payee_key] = payee_counts.get(payee_key, 0) + 1
+
+    currencies = sorted(transactions_by_currency)
+    currency_indices = {currency: index for index, currency in enumerate(currencies)}
+    features = np.asarray(
+        [
+            [
+                np.log1p(abs(float(tx.amount))),
+                np.sign(tx.amount),
+                payer_counts[
+                    ((tx.currency or "USD").upper(), (tx.payer or "").strip().casefold())
+                ],
+                payee_counts[
+                    ((tx.currency or "USD").upper(), (tx.payee or "").strip().casefold())
+                ],
+                *[
+                    float(currency_indices[(tx.currency or "USD").upper()] == index)
+                    for index in range(len(currencies))
+                ],
+            ]
+            for tx in eligible_transactions
+        ],
+        dtype=np.float64,
+    )
+    model = IsolationForest(
+        contamination=0.02,
+        n_estimators=50,
+        random_state=42,
+        n_jobs=1,
+    )
+    predictions = model.fit_predict(features)
+    anomaly_scores = -model.decision_function(features)
+
+    unusual_transactions = {}
+    for index, tx in enumerate(eligible_transactions):
+        if predictions[index] == -1:
+            unusual_transactions[tx.transaction_id] = (
+                (tx.currency or "USD").upper(),
+                float(anomaly_scores[index]),
+            )
+
+    return unusual_transactions
 
 
 def run_reconciliation(db: Session, target_date: date = None):
@@ -66,6 +135,7 @@ def run_reconciliation(db: Session, target_date: date = None):
     reconciled_count = 0
     matched_count = 0
     anomaly_count = 0
+    unusual_amounts = _find_unusual_amounts(transactions)
 
     # Convert each amount once and calculate fuzzy name scores in native code by batches.
     bank_usd_amounts = np.asarray(
@@ -121,6 +191,22 @@ def run_reconciliation(db: Session, target_date: date = None):
             ledger_id = None
             best_record_index = None
             amount_diff = 0.0
+
+            if tx.transaction_id in unusual_amounts:
+                currency, anomaly_score = unusual_amounts[tx.transaction_id]
+                db.add(Anomaly(
+                    transaction_id=tx.transaction_id,
+                    anomaly_type="unusual_amount",
+                    severity="medium",
+                    risk_score=float(np.clip(0.5 + anomaly_score, 0.5, 0.99)),
+                    explanation=(
+                        f"Isolation Forest flagged {tx.amount:.2f} {currency} as "
+                        f"unusual within this currency group (model anomaly score "
+                        f"{anomaly_score:.3f}), based on amount and payer/payee "
+                        "frequency patterns. Review; this is not a fraud determination."
+                    ),
+                ))
+                anomaly_count += 1
 
             # Check duplicate charge anomaly
             amount_key = (tx.payer, tx.amount, tx.currency)

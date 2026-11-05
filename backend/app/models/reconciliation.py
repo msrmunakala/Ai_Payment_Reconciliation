@@ -23,7 +23,7 @@ class Anomaly(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     transaction_id = Column(String, index=True, nullable=False)
-    anomaly_type = Column(String, nullable=False)  # duplicate_charge / amount_mismatch / missing_settlement / timing_anomaly / unrecognized_account
+    anomaly_type = Column(String, nullable=False)  # duplicate_charge / amount_mismatch / missing_settlement / unusual_amount / timing_anomaly / unrecognized_account
     severity = Column(String, default="medium")  # high / medium / low
     risk_score = Column(Float, default=0.5)  # 0.0 to 1.0
     explanation = Column(Text, nullable=False)

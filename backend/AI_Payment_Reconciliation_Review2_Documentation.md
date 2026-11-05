@@ -75,7 +75,7 @@ Stores multi-ledger fuzzy match output.
 ### 5. `Anomaly` (`anomalies` table)
 Stores flagged discrepancies and risk metrics.
 - `transaction_id`: Transaction ID with anomaly
-- `anomaly_type`: `duplicate_charge`, `amount_mismatch`, `missing_settlement`
+- `anomaly_type`: `duplicate_charge`, `amount_mismatch`, `missing_settlement`, `unusual_amount`
 - `severity`: `high`, `medium`, `low`
 - `risk_score`: Risk score (0.0 to 1.0)
 - `explanation`: AI explanation of anomaly
@@ -109,6 +109,7 @@ Evaluates records for:
 - `duplicate_charge`: Identical amount & payer within time window.
 - `amount_mismatch`: Intermediary fee variance or FX rounding error.
 - `missing_settlement`: Rail transfer committed with missing bank credit.
+- `unusual_amount`: An unsupervised Isolation Forest trained on the current reconciliation run's transaction amount, sign, currency, and payer/payee frequencies. Currency groups with fewer than 20 transactions are excluded; the model assumes 2% contamination. This is a review alert, not a fraud determination; labeled fraud examples are needed to train and validate a supervised fraud classifier.
 
 ### 3. ML Cash Flow Forecasting Engine (`Scikit-Learn` Ridge Regression)
 Trains on 30-day historical time-series data with 7-day weekly seasonality to predict future cash positions with 95% confidence intervals.
