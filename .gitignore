@@ -45,3 +45,4 @@ frontend/.vite/
 # OS / Temporary files
 Thumbs.db
 desktop.ini
+.neon

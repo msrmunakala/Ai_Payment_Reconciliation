@@ -1,6 +1,30 @@
 from sqlalchemy.orm import Session
-from app.models.reconciliation import Reconciliation, Anomaly
+from app.models.reconciliation import Reconciliation, Anomaly, ReconciliationRun
 from app.models.transaction import Transaction
+
+
+def get_reconciliation_runs(db: Session, limit: int = 20):
+    """Return recent reconciliation-run metadata for the dashboard history view."""
+    runs = db.query(ReconciliationRun).order_by(ReconciliationRun.started_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": run.id,
+            "status": run.status,
+            "trigger": run.trigger,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "transactions_examined": run.transactions_examined,
+            "candidates_evaluated": run.candidates_evaluated,
+            "matched_count": run.matched_count,
+            "partial_count": run.partial_count,
+            "unmatched_count": run.unmatched_count,
+            "flagged_count": run.flagged_count,
+            "duration_seconds": run.duration_seconds,
+            "scope": run.scope,
+            "settlement_window_id": run.settlement_window_id,
+        }
+        for run in runs
+    ]
 
 
 def get_dashboard_summary(db: Session):

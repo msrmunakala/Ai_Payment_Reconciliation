@@ -1,0 +1,27 @@
+# Render Blueprint – AI Payment Reconciliation Backend
+# https://docs.render.com/infrastructure-as-code
+
+services:
+  - type: web
+    name: ai-recon-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    region: singapore  # closest to Neon ap-southeast-1
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: API_KEY
+        generateValue: true  # Render generates a secure random value
+      - key: ENVIRONMENT
+        value: production
+      - key: CORS_ORIGINS
+        sync: false  # Set to your frontend URL after deployment
+      - key: SEED_ON_STARTUP
+        value: "true"
+      - key: MOJALOOP_ENABLED
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.12"

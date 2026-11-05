@@ -72,6 +72,24 @@ def _env_list(name: str, default: List[str]) -> List[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _normalize_database_url(url: str) -> str:
+    """Normalize a database URL for SQLAlchemy compatibility.
+
+    Neon (and most PostgreSQL providers) emit ``postgresql://…`` connection
+    strings. SQLAlchemy needs a driver suffix so it knows which DB-API module
+    to import. This helper rewrites the scheme to ``postgresql+psycopg2://``
+    when no driver is specified, which is the correct driver for psycopg2.
+
+    It also handles the ``postgres://`` legacy alias that some providers still
+    use (Heroku, older Neon URLs).
+    """
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://") and "+" not in url.split("://")[0]:
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+    return url
+
+
 @dataclass(frozen=True)
 class MatchingSettings:
     """Weights and tolerances for the reconciliation scoring model.
@@ -247,7 +265,9 @@ class Settings:
     app_name: str = _env_str("APP_NAME", "AI Payment Reconciliation Engine - Mojaloop")
     app_version: str = _env_str("APP_VERSION", "3.0.0")
     environment: str = _env_str("ENVIRONMENT", "development")
-    database_url: str = _env_str("DATABASE_URL", "sqlite:///./reconciliation.db")
+    database_url: str = _normalize_database_url(
+        _env_str("DATABASE_URL", "sqlite:///./reconciliation.db")
+    )
     sql_echo: bool = _env_bool("SQL_ECHO", False)
     db_pool_size: int = _env_int("DB_POOL_SIZE", 5)
     db_max_overflow: int = _env_int("DB_MAX_OVERFLOW", 10)
@@ -271,6 +291,11 @@ class Settings:
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
+
+    @property
+    def is_neon(self) -> bool:
+        """True when the database URL points to a Neon serverless endpoint."""
+        return ".neon.tech" in self.database_url
 
     def validate(self) -> List[str]:
         """Validate configuration, returning a list of human-readable warnings.

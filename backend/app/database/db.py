@@ -47,6 +47,14 @@ else:
         # which avoids "server closed the connection unexpectedly" after idle.
         pool_pre_ping=True,
     )
+    # Neon serverless PostgreSQL requires SSL and may drop idle connections
+    # faster than a traditional server. Reduce pool_recycle accordingly.
+    if settings.is_neon:
+        _engine_kwargs["pool_recycle"] = min(settings.db_pool_recycle_seconds, 300)
+        # Ensure SSL is used even if not explicitly in the URL query string.
+        if "sslmode" not in DATABASE_URL:
+            _engine_kwargs.setdefault("connect_args", {})
+            _engine_kwargs["connect_args"]["sslmode"] = "require"
 
 engine: Engine = create_engine(DATABASE_URL, **_engine_kwargs)
 

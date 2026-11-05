@@ -61,3 +61,52 @@ def fetch_transactions():
             }
         ]
     }
+
+
+class PersistResult:
+    """Small compatibility wrapper for the older router contract."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def as_dict(self):
+        return self.payload
+
+
+def connection_status():
+    """Return the current legal/demo-mode connection state for the hub."""
+    return {
+        "status": "offline",
+        "configured": False,
+        "mode": "stubbed",
+        "message": "Mojaloop is running in local demo mode until real credentials are configured.",
+        "hub_base_url": os.getenv("MOJALOOP_BASE_URL", ""),
+    }
+
+
+def simulated_transfers():
+    """Compatibility alias for the older mock-transfer API."""
+    payload = fetch_transactions()
+    payload["source"] = "mojaloop-sim"
+    payload["count"] = len(payload.get("transactions", []))
+    return payload
+
+
+def persist_transfers(db, transactions, source="mojaloop-sim"):
+    """Compatibility shim that accepts the older service call signature."""
+    items = list(transactions or [])
+    return PersistResult({
+        "source": source,
+        "count": len(items),
+        "transactions": items,
+    })
+
+
+def verify_transfer(db, transaction_id):
+    """Compatibility stub for single-transfer verification requests."""
+    return {
+        "transaction_id": transaction_id,
+        "verified": False,
+        "status": "not_found",
+        "message": "No live Mojaloop connection is configured in this demo environment.",
+    }
