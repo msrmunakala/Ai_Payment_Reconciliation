@@ -30,6 +30,7 @@ frontend/.vite/
 # Environment variables & secrets
 .env
 .env.local
+.neon
 
 # IDE & Editor files
 .vscode/

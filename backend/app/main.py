@@ -46,6 +46,9 @@ API_KEY = os.getenv("API_KEY", "review2-demo-key")
 ANALYST_USERNAME = os.getenv("ANALYST_USERNAME", "analyst")
 ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "recon-secure")
 ANALYST_ROLE = "analysis_security"
+SEED_ON_STARTUP = os.getenv("SEED_ON_STARTUP", "true").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 
 
 class LoginRequest(BaseModel):
@@ -70,7 +73,7 @@ async def lifespan(app: FastAPI):
     init_db()
     db = next(get_db())
     try:
-        if not db.query(Transaction).first():
+        if SEED_ON_STARTUP and not db.query(Transaction).first():
             seed_demo_data(db)
     finally:
         db.close()
