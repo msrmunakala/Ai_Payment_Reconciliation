@@ -46,6 +46,11 @@ API_KEY = os.getenv("API_KEY", "review2-demo-key")
 ANALYST_USERNAME = os.getenv("ANALYST_USERNAME", "analyst")
 ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "recon-secure")
 ANALYST_ROLE = "analysis_security"
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
 SEED_ON_STARTUP = os.getenv("SEED_ON_STARTUP", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
@@ -93,7 +98,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -356,4 +361,3 @@ def export_report(status: Optional[str] = None, db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=reconciliation-report.csv"}
     )
-

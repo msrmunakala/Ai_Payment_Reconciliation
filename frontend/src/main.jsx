@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { Download, LogOut, Plus, Search, X } from 'lucide-react';
 import './styles.css';
 
-const API = import.meta.env.VITE_API_URL ?? '';
+const _rawApi = import.meta.env.VITE_API_URL ?? '';
+const API = _rawApi && !_rawApi.startsWith('http') ? `https://${_rawApi}` : _rawApi;
 const SESSION_KEY = 'recon.analyst.session';
 const localDate = () => {
   const now = new Date();
