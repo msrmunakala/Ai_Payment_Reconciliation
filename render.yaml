@@ -1,6 +1,13 @@
-# Render Blueprint for the Final branch.
-# Set DATABASE_URL to the Neon pooled connection string in Render dashboard.
+# Render Blueprint — Final branch
+# Deploy both backend and frontend as separate Docker web services.
+#
+# Before deploying:
+#   1. Set DATABASE_URL to your Neon pooled connection string
+#   2. Set ANALYST_PASSWORD to a strong password
+#   3. After backend deploys, copy its URL into VITE_API_URL for the frontend
+
 services:
+  # ── Backend (FastAPI + Neon PostgreSQL) ──────────────────────────────────
   - type: web
     name: ai-recon-backend
     runtime: docker
@@ -11,24 +18,26 @@ services:
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        sync: false
+        sync: false          # paste your Neon pooled URL here in Render dashboard
       - key: API_KEY
-        generateValue: true
+        generateValue: true  # auto-generated strong key
       - key: ANALYST_USERNAME
         value: analyst
       - key: ANALYST_PASSWORD
-        sync: false
+        sync: false          # set a strong password in Render dashboard
       - key: SEED_ON_STARTUP
-        value: "false"
+        value: "true"        # seeds demo data on first boot; set false after first deploy
+      - key: CORS_ORIGINS
+        sync: false          # set to your frontend Render URL after it deploys
 
+  # ── Frontend (React + Vite + Nginx) ──────────────────────────────────────
   - type: web
     name: ai-payment-reconciliation
-    runtime: static
-    rootDir: frontend
-    buildCommand: npm ci && npm run build
-    staticPublishPath: ./dist
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    region: singapore
+    plan: free
     envVars:
-      - key: SKIP_INSTALL_DEPS
-        value: "true"
       - key: VITE_API_URL
-        sync: false
+        sync: false          # set to your backend Render URL e.g. https://ai-recon-backend.onrender.com
