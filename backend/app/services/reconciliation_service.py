@@ -12,6 +12,19 @@ from app.services.fx_service import convert_to_usd, init_fx_rates
 from app.services.forecasting_service import generate_forecast
 
 
+def _score_unique_names(queries, choices):
+    unique_queries = list(dict.fromkeys(queries))
+    scores = process.cdist(
+        unique_queries,
+        choices,
+        scorer=fuzz.token_sort_ratio,
+        dtype=np.float64,
+        workers=1,
+    )
+    query_indices = {query: index for index, query in enumerate(unique_queries)}
+    return scores, query_indices
+
+
 def run_reconciliation(db: Session, target_date: date = None):
     # A selected date scopes the run to the ledger, bank, and ERP records loaded for that day.
     if target_date:
@@ -48,7 +61,7 @@ def run_reconciliation(db: Session, target_date: date = None):
         # Preserve the original all-record refresh for API clients without a selected date.
         db.query(Reconciliation).delete()
         db.query(Anomaly).delete()
-    db.commit()
+    db.flush()
 
     reconciled_count = 0
     matched_count = 0
@@ -91,28 +104,16 @@ def run_reconciliation(db: Session, target_date: date = None):
             for name in ((tx.payer or "").lower(), (tx.payee or "").lower())
         ]
         erp_queries = [(tx.payee or "").lower() for tx in transaction_batch]
-        bank_name_scores = (
-            process.cdist(
-                bank_queries,
-                bank_names,
-                scorer=fuzz.token_sort_ratio,
-                dtype=np.float64,
-                workers=-1,
+        if bank_records:
+            bank_name_scores, bank_query_indices = _score_unique_names(
+                bank_queries, bank_names
             )
-            if bank_records else None
-        )
-        erp_name_scores = (
-            process.cdist(
-                erp_queries,
-                erp_names,
-                scorer=fuzz.token_sort_ratio,
-                dtype=np.float64,
-                workers=-1,
+        if erp_records:
+            erp_name_scores, erp_query_indices = _score_unique_names(
+                erp_queries, erp_names
             )
-            if erp_records else None
-        )
 
-        for batch_index, tx in enumerate(transaction_batch):
+        for tx in transaction_batch:
             tx_usd_amount = convert_to_usd(tx.amount, tx.currency, db)
             best_match = None
             best_confidence = 0.0
@@ -140,8 +141,12 @@ def run_reconciliation(db: Session, target_date: date = None):
             # 1. Try matching against Bank Records
             if bank_records:
                 tx_bank_name_scores = np.maximum(
-                    bank_name_scores[batch_index * 2],
-                    bank_name_scores[batch_index * 2 + 1],
+                    bank_name_scores[
+                        bank_query_indices[(tx.payer or "").lower()]
+                    ],
+                    bank_name_scores[
+                        bank_query_indices[(tx.payee or "").lower()]
+                    ],
                 )
                 amount_deltas = np.abs(tx_usd_amount - bank_usd_amounts)
                 amount_scores = np.maximum(
@@ -172,7 +177,9 @@ def run_reconciliation(db: Session, target_date: date = None):
                     0.0,
                     100.0 - (erp_amount_deltas / (tx_usd_amount + 1e-5)) * 100.0,
                 )
-                tx_erp_name_scores = erp_name_scores[batch_index]
+                tx_erp_name_scores = erp_name_scores[
+                    erp_query_indices[(tx.payee or "").lower()]
+                ]
                 erp_reference_boosts = np.zeros(len(erp_records), dtype=np.float64)
                 tx_reference = (tx.reference_id or "").strip()
                 if tx_reference in erp_references:
@@ -450,4 +457,3 @@ def process_transfer(db: Session, transfer):
         "transfer_state": transaction.transfer_state,
         "message": "Transaction Received and Reconciled Successfully"
     }
-

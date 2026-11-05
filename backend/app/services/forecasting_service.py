@@ -12,7 +12,7 @@ def generate_forecast(db: Session, days: int = 7):
     db.commit()
 
     # Get historical transaction data grouped by date
-    txs = db.query(Transaction).all()
+    txs = db.query(Transaction.created_at, Transaction.amount).all()
 
     today = datetime.utcnow().date()
     
